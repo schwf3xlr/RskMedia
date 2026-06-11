@@ -1,0 +1,230 @@
+<%- include('partials/header', { title: 'Админ - RskMedia' }) %>
+<%- include('partials/navbar') %>
+
+<div class="page-container">
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Админ-панель</h1>
+      <p class="page-subtitle">Управление медиа, токенами и категориями</p>
+    </div>
+  </div>
+
+  <% const ages = [13, 14, 15, 16, 17, 18, 19]; %>
+
+  <div class="admin-tabs">
+    <button class="admin-tab active" data-tab="upload">
+      <i data-lucide="upload-cloud" style="width:16px;height:16px"></i>
+      Загрузка
+    </button>
+    <button class="admin-tab" data-tab="batch">
+      <i data-lucide="settings-2" style="width:16px;height:16px"></i>
+      Редактирование
+    </button>
+    <button class="admin-tab" data-tab="tokens">
+      <i data-lucide="key-round" style="width:16px;height:16px"></i>
+      Токены
+    </button>
+    <button class="admin-tab" data-tab="backup">
+      <i data-lucide="database" style="width:16px;height:16px"></i>
+      Бэкап
+    </button>
+  </div>
+
+  <div class="admin-panel active" id="uploadPanel">
+    <div class="upload-card">
+      <div class="upload-card-title">
+        <i data-lucide="upload" style="width:16px;height:16px"></i>
+        Одиночная загрузка
+      </div>
+      <form class="upload-form" id="singleUploadForm">
+        <div class="file-drop-zone" id="singleDropZone">
+          <div class="file-drop-zone-text">
+            <i data-lucide="image-plus" style="width:28px;height:28px;color:var(--accent);margin-bottom:6px"></i><br>
+            <strong>Перетащите файл</strong> или нажмите для выбора
+          </div>
+          <div class="file-drop-zone-sub">JPG, PNG, GIF, MP4, MOV до 500 МБ</div>
+          <input type="file" id="singleFile" class="file-input-hidden" accept="image/*,video/*" required>
+        </div>
+        <div class="upload-form-row">
+          <select class="filter-select" id="singleCategory">
+            <option value="">Категория</option>
+          </select>
+          <select class="filter-select" id="singleSubcategory">
+            <option value="">Подкатегория</option>
+          </select>
+          <select class="filter-select" id="singleAge">
+            <option value="">Возраст</option>
+            <% for(let i of ages) { %>
+            <option value="<%= i %>"><%= i >= 19 ? i + '+' : i %></option>
+            <% } %>
+          </select>
+          <button type="submit" class="btn btn-primary">
+            <i data-lucide="upload" style="width:16px;height:16px"></i>
+            Загрузить
+          </button>
+        </div>
+      </form>
+      <div class="progress-bar" id="singleProgress" style="display:none;">
+        <div class="progress-fill" id="singleProgressFill"></div>
+      </div>
+    </div>
+
+    <div class="upload-card">
+      <div class="upload-card-title">
+        <i data-lucide="images" style="width:16px;height:16px"></i>
+        Множественная загрузка
+      </div>
+      <form class="upload-form" id="batchUploadForm">
+        <div class="file-drop-zone" id="batchDropZone">
+          <div class="file-drop-zone-text">
+            <i data-lucide="folder-plus" style="width:28px;height:28px;color:var(--accent);margin-bottom:6px"></i><br>
+            <strong>Перетащите файлы</strong> или нажмите для выбора
+          </div>
+          <div class="file-drop-zone-sub">До 200 файлов за раз</div>
+          <input type="file" id="batchFiles" class="file-input-hidden" multiple accept="image/*,video/*" required>
+        </div>
+        <div class="upload-form-row">
+          <select class="filter-select" id="batchCategory">
+            <option value="">Категория</option>
+          </select>
+          <select class="filter-select" id="batchSubcategory">
+            <option value="">Подкатегория</option>
+          </select>
+          <select class="filter-select" id="batchAge">
+            <option value="">Возраст</option>
+            <% for(let i of ages) { %>
+            <option value="<%= i %>"><%= i >= 19 ? i + '+' : i %></option>
+            <% } %>
+          </select>
+          <button type="submit" class="btn btn-primary">
+            <i data-lucide="upload" style="width:16px;height:16px"></i>
+            Загрузить
+          </button>
+        </div>
+      </form>
+      <div class="upload-queue" id="uploadQueue"></div>
+    </div>
+  </div>
+
+  <div class="admin-panel" id="batchPanel">
+    <div class="batch-filter-bar">
+      <span class="batch-filter-label">Показать только:</span>
+      <label class="batch-filter-chip">
+        <input type="checkbox" class="admin-missing-filter" data-field="category_id">
+        <span>Без категории</span>
+      </label>
+      <label class="batch-filter-chip">
+        <input type="checkbox" class="admin-missing-filter" data-field="subcategory_id">
+        <span>Без подкатегории</span>
+      </label>
+      <label class="batch-filter-chip">
+        <input type="checkbox" class="admin-missing-filter" data-field="age_rating">
+        <span>Без возраста</span>
+      </label>
+    </div>
+    <div class="batch-actions-bar">
+      <span class="selected-count" id="selectedCount">Выбрано: 0</span>
+      <button class="btn btn-sm" id="selectAllBtn">
+        <i data-lucide="check-square" style="width:14px;height:14px"></i>
+        Выбрать всё
+      </button>
+      <select class="filter-select" id="batchSetCategory">
+        <option value="">Установить категорию</option>
+      </select>
+      <select class="filter-select" id="batchSetSubcategory">
+        <option value="">Установить подкатегорию</option>
+      </select>
+      <select class="filter-select" id="batchSetAge">
+        <option value="">Установить возраст</option>
+        <% for(let i of ages) { %>
+        <option value="<%= i %>"><%= i >= 19 ? i + '+' : i %></option>
+        <% } %>
+      </select>
+      <button class="btn btn-primary" id="applyBatch">
+        <i data-lucide="check" style="width:16px;height:16px"></i>
+        Применить
+      </button>
+      <button class="btn btn-danger" id="deleteBatch">
+        <i data-lucide="trash-2" style="width:16px;height:16px"></i>
+        Удалить
+      </button>
+    </div>
+    <div class="admin-media-grid" id="mediaCards"></div>
+    <div class="admin-grid-footer">
+      <div class="admin-grid-sentinel" id="adminGridSentinel"></div>
+    </div>
+  </div>
+
+  <div class="admin-panel" id="tokensPanel">
+    <div class="table-container">
+      <div class="token-form">
+        <select id="tokenType" required>
+          <option value="client">Client</option>
+          <option value="admin">Admin</option>
+        </select>
+        <input type="date" id="tokenExpires" placeholder="Срок действия (опционально)">
+        <button type="button" class="btn btn-primary" id="createTokenBtn">
+          <i data-lucide="plus" style="width:16px;height:16px"></i>
+          Создать токен
+        </button>
+      </div>
+      <div class="table-responsive">
+        <table class="admin-table" id="tokensTable">
+          <thead>
+            <tr>
+              <th>Токен</th>
+              <th>Тип</th>
+              <th>Создан</th>
+              <th>Истекает</th>
+              <th>Статус</th>
+              <th>Действия</th>
+            </tr>
+          </thead>
+          <tbody id="tokensTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="admin-panel" id="backupPanel">
+    <div class="upload-card">
+      <div class="upload-card-title">
+        <i data-lucide="download" style="width:18px;height:18px;vertical-align:middle;margin-right:6px"></i>
+        Скачать бэкап
+      </div>
+      <p style="color:var(--text-secondary);font-size:14px;margin-bottom:16px">
+        Скачать все данные базы данных (категории, подкатегории, токены, медиа, избранное) в JSON-файл
+      </p>
+      <button class="btn btn-primary" id="backupBtn">
+        <i data-lucide="download" style="width:16px;height:16px"></i>
+        Скачать бэкап
+      </button>
+    </div>
+
+    <div class="upload-card">
+      <div class="upload-card-title">
+        <i data-lucide="upload" style="width:18px;height:18px;vertical-align:middle;margin-right:6px"></i>
+        Восстановить из бэкапа
+      </div>
+      <p style="color:var(--text-secondary);font-size:14px;margin-bottom:16px">
+        Загрузить JSON-файл бэкапа для восстановления. Текущие данные будут заменены
+      </p>
+      <div class="file-drop-zone" id="restoreDropZone" style="margin-bottom:16px">
+        <div class="file-drop-zone-text">
+          <i data-lucide="file-json" style="width:32px;height:32px;color:var(--warning);margin-bottom:8px"></i><br>
+          <strong>Выберите JSON-файл бэкапа</strong>
+        </div>
+        <div class="file-drop-zone-sub">.json, до 50 МБ</div>
+        <input type="file" id="restoreFile" class="file-input-hidden" accept=".json">
+      </div>
+      <div id="restoreStatus" style="display:none;margin-bottom:12px"></div>
+      <button class="btn btn-danger" id="restoreBtn" disabled>
+        <i data-lucide="refresh-cw" style="width:16px;height:16px"></i>
+        Восстановить
+      </button>
+    </div>
+  </div>
+</div>
+
+<script src="/js/admin.js" type="module"></script>
+<%- include('partials/footer') %>

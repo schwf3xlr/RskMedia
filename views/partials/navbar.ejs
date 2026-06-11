@@ -1,0 +1,29 @@
+<nav class="navbar" id="navbar">
+  <div class="navbar-container">
+    <a href="/" class="navbar-logo">RskMedia</a>
+    <button class="navbar-toggle" id="navbarToggle" aria-label="Toggle menu">
+      <span></span>
+      <span></span>
+      <span></span>
+    </button>
+    <div class="navbar-menu" id="navbarMenu">
+      <a href="/" class="navbar-link">
+        <i data-lucide="home" style="width:16px;height:16px"></i>
+        Главная
+      </a>
+      <a href="/favorites" class="navbar-link">
+        <i data-lucide="heart" style="width:16px;height:16px"></i>
+        Избранное
+      </a>
+      <a href="/admin" class="navbar-link navbar-link-admin" id="adminLink" style="display:none;">
+        <i data-lucide="shield" style="width:16px;height:16px"></i>
+        Админ
+      </a>
+      <button class="navbar-link navbar-btn" id="logoutBtn">
+        <i data-lucide="log-out" style="width:16px;height:16px"></i>
+        Выход
+      </button>
+    </div>
+  </div>
+</nav>
+<script>lucide.createIcons();</script>
