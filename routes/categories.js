@@ -5,6 +5,7 @@ const { authenticateToken } = require('../middleware/auth');
 const { requireAdmin } = require('../middleware/admin');
 
 router.get('/', authenticateToken, CategoryController.getAll);
+router.get('/subcategories', authenticateToken, CategoryController.getAllSubcategories);
 router.get('/subcategories/:category_id', authenticateToken, CategoryController.getSubcategories);
 router.post('/', authenticateToken, requireAdmin, CategoryController.create);
 router.post('/subcategories', authenticateToken, requireAdmin, CategoryController.createSubcategory);

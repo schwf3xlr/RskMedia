@@ -22,6 +22,7 @@ tabs.forEach(tab => {
       loadMediaCards(1, false).then(() => setupAdminInfiniteScroll());
     }
     if (target === 'tokens') loadTokens();
+    if (target === 'duplicates') lucide.createIcons();
   });
 });
 
@@ -643,6 +644,151 @@ window.deleteToken = async function(id) {
     toast.show(err.message, 'error');
   }
 };
+
+// === DUPLICATES ===
+
+const findDuplicatesBtn = document.getElementById('findDuplicatesBtn');
+const duplicatesResults = document.getElementById('duplicatesResults');
+const duplicatesProgress = document.getElementById('duplicatesProgress');
+const duplicatesProgressFill = document.getElementById('duplicatesProgressFill');
+const duplicatesStatus = document.getElementById('duplicatesStatus');
+
+findDuplicatesBtn?.addEventListener('click', async () => {
+  findDuplicatesBtn.disabled = true;
+  findDuplicatesBtn.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px"></div> Поиск...';
+  duplicatesProgress.style.display = 'block';
+  duplicatesProgressFill.style.width = '0%';
+  duplicatesResults.innerHTML = '';
+
+  let progress = 0;
+  const progressInterval = setInterval(() => {
+    progress = Math.min(progress + 5, 70);
+    duplicatesProgressFill.style.width = progress + '%';
+  }, 1000);
+
+  try {
+    const data = await api.post('/api/admin/find-duplicates');
+    clearInterval(progressInterval);
+    duplicatesProgressFill.style.width = '100%';
+
+    if (!data.groups || data.groups.length === 0) {
+      duplicatesResults.innerHTML = `
+        <div class="upload-card">
+          <div class="empty-state">
+            <div class="empty-state-icon">✅</div>
+            <div class="empty-state-title">Дубликаты не найдены</div>
+            <div class="empty-state-text">Все медиа уникальны по обложкам</div>
+          </div>
+        </div>`;
+    } else {
+      duplicatesResults.innerHTML = `
+        <div class="upload-card">
+          <div class="upload-card-title" style="display:flex;align-items:center;justify-content:space-between">
+            <span>Найдено групп: ${data.groups.length} (${data.totalDuplicates} медиа)</span>
+            <div style="display:flex;gap:8px">
+              <span class="selected-count" id="dupSelectedCount">Выбрано: 0</span>
+              <button class="btn btn-danger btn-sm" id="deleteDupSelected" disabled>
+                <i data-lucide="trash-2" style="width:14px;height:14px"></i>
+                Удалить выбранные
+              </button>
+            </div>
+          </div>
+          <div id="duplicatesGroups"></div>
+        </div>`;
+
+      const groupsContainer = document.getElementById('duplicatesGroups');
+      data.groups.forEach((group, gi) => {
+        const groupEl = document.createElement('div');
+        groupEl.className = 'dup-group';
+        groupEl.innerHTML = `<div class="dup-group-label">Группа ${gi + 1} (${group.length} шт.)</div><div class="dup-group-items"></div>`;
+        const itemsContainer = groupEl.querySelector('.dup-group-items');
+        group.items.forEach(item => {
+          const card = document.createElement('div');
+          card.className = 'dup-card';
+          card.innerHTML = `
+            <img src="${item.thumbnail_url}" class="dup-thumb" loading="lazy">
+            <div class="dup-info">
+              <span class="dup-id">#${item.id}</span>
+              <span class="dup-type">${item.type === 'photo' ? '🖼️' : '🎥'}</span>
+              ${item.age_rating !== null ? `<span class="card-age" style="position:static;font-size:11px">${item.age_rating >= 19 ? item.age_rating + '+' : item.age_rating}</span>` : ''}
+            </div>
+            <label class="dup-checkbox-label">
+              <input type="checkbox" class="dup-checkbox" value="${item.id}">
+            </label>
+          `;
+          card.querySelector('.dup-thumb').addEventListener('click', () => {
+            const previewModal = document.createElement('div');
+            previewModal.className = 'modal active';
+            previewModal.innerHTML = `
+              <div class="modal-overlay"></div>
+              <div class="modal-media-full">
+                ${item.type === 'video'
+                  ? `<video src="${item.url}" controls autoplay style="width:100%;height:100%;object-fit:contain"></video>`
+                  : `<img src="${item.url}" style="width:100%;height:100%;object-fit:contain">`}
+              </div>
+              <button class="modal-close" style="z-index:10">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+              </button>`;
+            document.body.appendChild(previewModal);
+            document.body.style.overflow = 'hidden';
+            previewModal.querySelector('.modal-overlay').addEventListener('click', () => { previewModal.remove(); document.body.style.overflow = ''; });
+            previewModal.querySelector('.modal-close').addEventListener('click', () => { previewModal.remove(); document.body.style.overflow = ''; });
+          });
+          itemsContainer.appendChild(card);
+        });
+        groupsContainer.appendChild(groupEl);
+      });
+
+      lucide.createIcons();
+
+      document.querySelectorAll('.dup-checkbox').forEach(cb => {
+        cb.addEventListener('change', updateDupSelectedCount);
+      });
+      document.getElementById('deleteDupSelected')?.addEventListener('click', deleteDupSelected);
+    }
+  } catch (err) {
+    clearInterval(progressInterval);
+    duplicatesResults.innerHTML = `<div class="upload-card"><div class="status-error">Ошибка: ${err.message}</div></div>`;
+  } finally {
+    findDuplicatesBtn.disabled = false;
+    findDuplicatesBtn.innerHTML = '<i data-lucide="search" style="width:16px;height:16px"></i> Найти дубликаты';
+    setTimeout(() => {
+      duplicatesProgress.style.display = 'none';
+      duplicatesProgressFill.style.width = '0%';
+    }, 500);
+    lucide.createIcons();
+  }
+});
+
+function updateDupSelectedCount() {
+  const checked = document.querySelectorAll('.dup-checkbox:checked');
+  const countEl = document.getElementById('dupSelectedCount');
+  const delBtn = document.getElementById('deleteDupSelected');
+  if (countEl) countEl.textContent = `Выбрано: ${checked.length}`;
+  if (delBtn) delBtn.disabled = checked.length === 0;
+}
+
+async function deleteDupSelected() {
+  const checked = document.querySelectorAll('.dup-checkbox:checked');
+  const ids = Array.from(checked).map(cb => cb.value);
+  if (!ids.length) return;
+
+  if (!await showConfirm(`Удалить ${ids.length} элементов?`)) return;
+
+  try {
+    await api.post('/api/media/batch-delete', { ids });
+    toast.show('Элементы удалены');
+    checked.forEach(cb => {
+      const card = cb.closest('.dup-card');
+      card.style.opacity = '0';
+      card.style.transform = 'scale(0.9)';
+      setTimeout(() => card.remove(), 300);
+    });
+    updateDupSelectedCount();
+  } catch (err) {
+    toast.show(err.message, 'error');
+  }
+}
 
 // === BACKUP / RESTORE ===
 

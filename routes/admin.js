@@ -14,5 +14,6 @@ router.delete('/tokens/:id', authenticateToken, requireAdmin, AdminController.de
 router.get('/media', authenticateToken, requireAdmin, AdminController.getMedia);
 router.get('/backup', authenticateToken, requireAdmin, AdminController.backup);
 router.post('/restore', authenticateToken, requireAdmin, upload.single('file'), AdminController.restore);
+router.post('/find-duplicates', authenticateToken, requireAdmin, AdminController.findDuplicates);
 
 module.exports = router;

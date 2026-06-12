@@ -12,10 +12,11 @@ const gallery = {
   async init() {
     if (!auth.isAuthenticated()) return;
 
+    await this.loadCategories();
+    await this.loadSubcategories();
     this.setupFilters();
     this.setupInfiniteScroll();
     this.setupModal();
-    await this.loadCategories();
     await this.loadMore();
   },
 
@@ -28,8 +29,10 @@ const gallery = {
 
     if (categoryFilter) {
       categoryFilter.addEventListener('change', async () => {
-        const subs = await categories.loadSubcategories(categoryFilter.value);
-        categories.populateSelect(subcategoryFilter, subs, 'Все подкатегории');
+        if (subcategoryFilter) {
+          const subs = await categories.loadSubcategories(categoryFilter.value || null);
+          categories.populateSelect(subcategoryFilter, subs, 'Все подкатегории');
+        }
       });
     }
 
@@ -55,6 +58,14 @@ const gallery = {
     const categoryFilter = document.getElementById('categoryFilter');
     if (categoryFilter) {
       categories.populateSelect(categoryFilter, cats, 'Все категории');
+    }
+  },
+
+  async loadSubcategories() {
+    const subs = await categories.loadSubcategories();
+    const subcategoryFilter = document.getElementById('subcategoryFilter');
+    if (subcategoryFilter) {
+      categories.populateSelect(subcategoryFilter, subs, 'Все подкатегории');
     }
   },
 

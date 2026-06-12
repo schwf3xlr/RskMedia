@@ -48,10 +48,26 @@ async function getSignedUrlForKey(key, expiresIn = 3600) {
   return url;
 }
 
+async function getObjectBuffer(key) {
+  const command = new GetObjectCommand({
+    Bucket: bucket,
+    Key: key,
+  });
+  const response = await s3Client.send(command);
+  const stream = response.Body;
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    stream.on('data', chunk => chunks.push(chunk));
+    stream.on('end', () => resolve(Buffer.concat(chunks)));
+    stream.on('error', reject);
+  });
+}
+
 module.exports = {
   s3Client,
   uploadToS3,
   deleteFromS3,
   getSignedUrlForKey,
+  getObjectBuffer,
   bucket,
 };

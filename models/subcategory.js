@@ -1,6 +1,16 @@
 const db = require('../config/database');
 
 const SubcategoryModel = {
+  async getAll() {
+    const result = await db.query(
+      `SELECT name, STRING_AGG(id::TEXT, ',' ORDER BY id) AS id
+       FROM subcategories
+       GROUP BY name
+       ORDER BY name`
+    );
+    return result.rows;
+  },
+
   async getByCategoryId(categoryId) {
     const result = await db.query(
       'SELECT * FROM subcategories WHERE category_id = $1 ORDER BY name',

@@ -20,8 +20,11 @@ const MediaModel = {
       params.push(categoryId);
     }
     if (subcategoryId) {
-      query += ` AND m.subcategory_id = $${idx++}`;
-      params.push(subcategoryId);
+      const ids = subcategoryId.split(',').map(Number).filter(n => !isNaN(n));
+      if (ids.length > 0) {
+        query += ` AND m.subcategory_id IN (${ids.map(() => `$${idx++}`).join(',')})`;
+        params.push(...ids);
+      }
     }
     if (age !== undefined && age !== null && age !== '') {
       query += ` AND m.age_rating = $${idx++}`;
@@ -93,8 +96,11 @@ const MediaModel = {
       params.push(categoryId);
     }
     if (subcategoryId) {
-      query += ` AND subcategory_id = $${idx++}`;
-      params.push(subcategoryId);
+      const ids = subcategoryId.split(',').map(Number).filter(n => !isNaN(n));
+      if (ids.length > 0) {
+        query += ` AND subcategory_id IN (${ids.map(() => `$${idx++}`).join(',')})`;
+        params.push(...ids);
+      }
     }
     if (age !== undefined && age !== null && age !== '') {
       query += ` AND age_rating = $${idx++}`;

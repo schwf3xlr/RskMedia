@@ -28,6 +28,10 @@
       <i data-lucide="database" style="width:16px;height:16px"></i>
       Бэкап
     </button>
+    <button class="admin-tab" data-tab="duplicates">
+      <i data-lucide="copy" style="width:16px;height:16px"></i>
+      Дубликаты
+    </button>
   </div>
 
   <div class="admin-panel active" id="uploadPanel">
@@ -223,6 +227,27 @@
         Восстановить
       </button>
     </div>
+  </div>
+
+  <div class="admin-panel" id="duplicatesPanel">
+    <div class="upload-card">
+      <div class="upload-card-title">
+        <i data-lucide="search" style="width:16px;height:16px"></i>
+        Поиск дубликатов
+      </div>
+      <p style="color:var(--text-secondary);font-size:14px;margin-bottom:16px">
+        Поиск медиа с похожими обложками. Для точных результатов сначала вычислить хеши для всех медиа.
+      </p>
+      <button class="btn btn-primary" id="findDuplicatesBtn">
+        <i data-lucide="search" style="width:16px;height:16px"></i>
+        Найти дубликаты
+      </button>
+      <div class="progress-bar" id="duplicatesProgress" style="display:none;margin-top:12px">
+        <div class="progress-fill" id="duplicatesProgressFill"></div>
+      </div>
+      <div id="duplicatesStatus" style="margin-top:12px"></div>
+    </div>
+    <div id="duplicatesResults"></div>
   </div>
 </div>
 

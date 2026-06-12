@@ -28,6 +28,11 @@ const CategoryController = {
     res.json({ message: 'Category deleted' });
   },
 
+  async getAllSubcategories(req, res) {
+    const subcategories = await SubcategoryModel.getAll();
+    res.json(subcategories);
+  },
+
   async getSubcategories(req, res) {
     const { category_id } = req.params;
     const subcategories = await SubcategoryModel.getByCategoryId(category_id);

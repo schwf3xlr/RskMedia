@@ -123,7 +123,7 @@ const categories = {
   },
 
   async loadSubcategories(categoryId) {
-    if (!categoryId) return [];
+    if (!categoryId) return api.get('/api/categories/subcategories');
     return api.get(`/api/categories/subcategories/${categoryId}`);
   },
 
