@@ -103,6 +103,16 @@ const AdminController = {
 
     const client = await db.pool.connect();
     try {
+      // Get existing columns for each table from the database
+      const tableColumns = {};
+      for (const table of BACKUP_TABLES) {
+        const colResult = await client.query(
+          `SELECT column_name FROM information_schema.columns WHERE table_name = $1`,
+          [table]
+        );
+        tableColumns[table] = colResult.rows.map(r => r.column_name);
+      }
+
       await client.query('BEGIN');
 
       await client.query('TRUNCATE TABLE favorites, media, subcategories, categories, tokens CASCADE');
@@ -112,7 +122,10 @@ const AdminController = {
         const rows = data[table];
         if (rows.length === 0) continue;
 
-        const columns = Object.keys(rows[0]);
+        const existingColumns = tableColumns[table];
+        const columns = Object.keys(rows[0]).filter(c => existingColumns.includes(c));
+        if (columns.length === 0) continue;
+
         const colNames = columns.join(', ');
         const placeholders = columns.map((_, i) => `$${i + 1}`).join(', ');
 
@@ -124,7 +137,7 @@ const AdminController = {
           );
         }
 
-        const seqResult = await client.query(
+        await client.query(
           `SELECT setval('${table}_id_seq', COALESCE((SELECT MAX(id) FROM ${table}), 1))`
         );
       }

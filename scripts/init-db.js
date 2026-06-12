@@ -76,6 +76,9 @@ async function initDatabase() {
     await db.query(initSQL);
     console.log('Database tables initialized successfully');
 
+    // Migrations for existing tables
+    await db.query('ALTER TABLE media ADD COLUMN IF NOT EXISTS phash NUMERIC(20,0)');
+
     const tokenResult = await db.query('SELECT COUNT(*) FROM tokens');
     const tokenCount = parseInt(tokenResult.rows[0].count, 10);
 
