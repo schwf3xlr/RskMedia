@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS media (
     category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
     subcategory_id INTEGER REFERENCES subcategories(id) ON DELETE SET NULL,
     age_rating INTEGER CHECK (age_rating >= 0 AND age_rating <= 21),
+    phash NUMERIC(20,0),
     uploaded_at TIMESTAMP DEFAULT NOW()
 );
 
