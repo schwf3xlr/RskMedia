@@ -25,7 +25,7 @@ const upload = multer({
 router.get('/', authenticateToken, MediaController.getAll);
 router.get('/:id', authenticateToken, MediaController.getById);
 router.post('/upload/single', authenticateToken, requireAdmin, uploadLimiter, upload.single('file'), MediaController.uploadSingle);
-router.post('/upload/multiple', authenticateToken, requireAdmin, uploadLimiter, upload.array('files', 200), MediaController.uploadMultiple);
+router.post('/upload/multiple', authenticateToken, requireAdmin, uploadLimiter, upload.array('files', 1000), MediaController.uploadMultiple);
 router.put('/batch-update', authenticateToken, requireAdmin, MediaController.batchUpdate);
 router.post('/batch-delete', authenticateToken, requireAdmin, MediaController.batchDelete);
 router.delete('/:id', authenticateToken, requireAdmin, MediaController.delete);
