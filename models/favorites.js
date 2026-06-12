@@ -5,7 +5,8 @@ const SORT_MAP = {
   oldest: 'm.uploaded_at ASC',
   age_desc: 'm.age_rating DESC NULLS LAST, m.uploaded_at DESC',
   age_asc: 'm.age_rating ASC NULLS LAST, m.uploaded_at DESC',
-  type: 'm.type ASC, m.uploaded_at DESC',
+  photo_first: "m.type = 'photo' DESC, m.uploaded_at DESC",
+  video_first: "m.type = 'video' DESC, m.uploaded_at DESC",
   name: 'm.s3_key ASC',
 };
 
