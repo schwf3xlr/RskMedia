@@ -1,0 +1,42 @@
+<%- include('partials/header', { title: 'Login - RskMedia' }) %>
+
+<div class="login-page">
+  <div class="login-container">
+    <div class="login-card">
+      <h1 class="login-logo">RskMedia</h1>
+      <p class="login-subtitle">Введите ваш токен для входа</p>
+      <form class="login-form" id="loginForm">
+        <div class="login-input-wrapper">
+          <i data-lucide="key" class="login-input-icon"></i>
+          <input type="password" class="login-input" id="tokenInput" placeholder="Ваш токен (client_... или admin_...)" required autocomplete="current-password">
+        </div>
+        <button type="submit" class="login-btn">
+          <i data-lucide="arrow-right" style="width:18px;height:18px"></i>
+          Войти
+        </button>
+      </form>
+      <p class="login-error" id="loginError"></p>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { auth } from '/js/main.js';
+
+lucide.createIcons();
+
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const token = document.getElementById('tokenInput').value.trim();
+  const errorEl = document.getElementById('loginError');
+
+  try {
+    await auth.login(token);
+    window.location.href = '/';
+  } catch (err) {
+    errorEl.textContent = err.message || 'Ошибка подключения к серверу';
+  }
+});
+</script>
+
+<%- include('partials/footer') %>
