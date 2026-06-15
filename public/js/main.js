@@ -1,6 +1,6 @@
 const auth = {
-  token: localStorage.getItem('jwt_token'),
-  userType: localStorage.getItem('user_type'),
+  token: null,
+  userType: null,
 
   getToken() {
     return this.token;
@@ -8,7 +8,6 @@ const auth = {
 
   getAuthHeaders() {
     return {
-      'Authorization': `Bearer ${this.token}`,
       'Content-Type': 'application/json',
     };
   },
@@ -17,36 +16,36 @@ const auth = {
     const response = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
       body: JSON.stringify({ token }),
     });
 
     if (!response.ok) {
-      const error = await response.json();
+      const error = await response.json().catch(() => ({}));
       throw new Error(error.error || 'Ошибка подключения к серверу');
     }
 
     const data = await response.json();
-    this.token = data.token;
     this.userType = data.type;
-    localStorage.setItem('jwt_token', data.token);
-    localStorage.setItem('user_type', data.type);
     return data;
   },
 
-  logout() {
+  async logout() {
+    try {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+    } catch (err) {
+      console.error('Logout error:', err);
+    }
     this.token = null;
     this.userType = null;
-    localStorage.removeItem('jwt_token');
-    localStorage.removeItem('user_type');
     window.location.href = '/login';
   },
 
   isAdmin() {
     return this.userType === 'admin';
-  },
-
-  isAuthenticated() {
-    return !!this.token;
   },
 };
 
@@ -54,6 +53,7 @@ const api = {
   async request(url, options = {}) {
     const response = await fetch(url, {
       ...options,
+      credentials: 'same-origin',
       headers: {
         ...auth.getAuthHeaders(),
         ...options.headers,
@@ -66,7 +66,29 @@ const api = {
     }
 
     if (!response.ok) {
-      const error = await response.json();
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || 'Ошибка запроса к серверу');
+    }
+
+    return response.json();
+  },
+
+  async requestForm(url, options = {}) {
+    const response = await fetch(url, {
+      ...options,
+      credentials: 'same-origin',
+      headers: {
+        ...options.headers,
+      },
+    });
+
+    if (response.status === 401 || response.status === 403) {
+      auth.logout();
+      return;
+    }
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
       throw new Error(error.error || 'Ошибка запроса к серверу');
     }
 
@@ -100,19 +122,21 @@ const toast = {
   container: null,
 
   init() {
+    if (this.container) return;
     this.container = document.createElement('div');
     this.container.className = 'toast-container';
     document.body.appendChild(this.container);
   },
 
   show(message, type = 'success') {
-    if (!this.container) this.init();
+    this.init();
     const el = document.createElement('div');
     el.className = `toast ${type}`;
     el.textContent = message;
     this.container.appendChild(el);
     setTimeout(() => {
-      el.remove();
+      el.style.opacity = '0';
+      setTimeout(() => el.remove(), 300);
     }, 3000);
   },
 };
@@ -123,7 +147,20 @@ const categories = {
   },
 
   async loadSubcategories(categoryId) {
-    if (!categoryId) return api.get('/api/categories/subcategories');
+    if (!categoryId) {
+      const subs = await api.get('/api/categories/subcategories');
+      // Group by name across all categories; value becomes comma-separated IDs
+      const grouped = new Map();
+      subs.forEach(s => {
+        if (!grouped.has(s.name)) {
+          grouped.set(s.name, { id: String(s.id), name: s.name });
+        } else {
+          const existing = grouped.get(s.name);
+          existing.id += ',' + s.id;
+        }
+      });
+      return Array.from(grouped.values());
+    }
     return api.get(`/api/categories/subcategories/${categoryId}`);
   },
 
@@ -153,30 +190,26 @@ const favorites = {
     const data = await api.get(`/api/favorites/check/${mediaId}`);
     return data.isFavorite;
   },
+
+  async batchCheck(mediaIds) {
+    const data = await api.post('/api/favorites/batch-check', { ids: mediaIds });
+    return data;
+  },
 };
 
 export { auth, api, toast, categories, favorites };
 
-if (!window.location.pathname.includes('/login')) {
-  if (!auth.isAuthenticated()) {
-    window.location.href = '/login';
-  }
-
-  const logoutBtn = document.getElementById('logoutBtn');
-  if (logoutBtn) {
-    logoutBtn.addEventListener('click', () => auth.logout());
-  }
-
-  const adminLink = document.getElementById('adminLink');
-  if (adminLink && auth.isAdmin()) {
-    adminLink.style.display = 'inline-block';
-  }
-
-  const navbarToggle = document.getElementById('navbarToggle');
-  const navbarMenu = document.getElementById('navbarMenu');
-  if (navbarToggle && navbarMenu) {
-    navbarToggle.addEventListener('click', () => {
-      navbarMenu.classList.toggle('active');
-    });
-  }
+const logoutBtn = document.getElementById('logoutBtn');
+if (logoutBtn) {
+  logoutBtn.addEventListener('click', () => auth.logout());
 }
+
+const navbarToggle = document.getElementById('navbarToggle');
+const navbarMenu = document.getElementById('navbarMenu');
+if (navbarToggle && navbarMenu) {
+  navbarToggle.addEventListener('click', () => {
+    const isOpen = navbarMenu.classList.toggle('active');
+    navbarToggle.setAttribute('aria-expanded', String(isOpen));
+  });
+}
+

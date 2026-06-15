@@ -6,6 +6,11 @@ const CategoryModel = {
     return result.rows;
   },
 
+  async getById(id) {
+    const result = await db.query('SELECT * FROM categories WHERE id = $1', [id]);
+    return result.rows[0];
+  },
+
   async create(name) {
     const result = await db.query(
       'INSERT INTO categories (name) VALUES ($1) RETURNING *',
@@ -24,6 +29,14 @@ const CategoryModel = {
 
   async delete(id) {
     await db.query('DELETE FROM categories WHERE id = $1', [id]);
+  },
+
+  async getMediaCount(id) {
+    const result = await db.query(
+      'SELECT COUNT(*) FROM media WHERE category_id = $1',
+      [id]
+    );
+    return parseInt(result.rows[0].count);
   },
 };
 

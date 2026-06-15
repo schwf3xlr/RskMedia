@@ -8,12 +8,13 @@ const gallery = {
   filters: {},
   isFavorites: window.location.pathname === '/favorites',
   zoom: null,
+  favoriteCache: new Map(),
+  focusTrap: null,
 
   async init() {
-    if (!auth.isAuthenticated()) return;
-
     await this.loadCategories();
     await this.loadSubcategories();
+    this.restoreFiltersFromURL();
     this.setupFilters();
     this.setupInfiniteScroll();
     this.setupModal();
@@ -26,6 +27,7 @@ const gallery = {
     const ageFilter = document.getElementById('ageFilter');
     const sortFilter = document.getElementById('sortFilter');
     const applyBtn = document.getElementById('applyFilters');
+    const clearBtn = document.getElementById('clearFilters');
 
     if (categoryFilter) {
       categoryFilter.addEventListener('change', async () => {
@@ -36,21 +38,66 @@ const gallery = {
       });
     }
 
-    if (applyBtn) {
-      applyBtn.addEventListener('click', () => {
-        this.filters = {
-          category_id: categoryFilter?.value || '',
-          subcategory_id: subcategoryFilter?.value || '',
-          age: ageFilter?.value || '',
-          sort: sortFilter?.value || 'newest',
-        };
-        this.page = 1;
-        this.media = [];
-        this.hasMore = true;
-        document.getElementById('mediaGrid').innerHTML = '';
+    const apply = () => {
+      this.filters = {
+        category_id: categoryFilter?.value || '',
+        subcategory_id: subcategoryFilter?.value || '',
+        age: ageFilter?.value || '',
+        sort: sortFilter?.value || 'newest',
+      };
+      this.updateURL();
+      this.resetGrid();
+      this.loadMore();
+    };
+
+    if (applyBtn) applyBtn.addEventListener('click', apply);
+
+    if (clearBtn) {
+      clearBtn.addEventListener('click', () => {
+        if (categoryFilter) categoryFilter.value = '';
+        if (subcategoryFilter) subcategoryFilter.value = '';
+        if (ageFilter) ageFilter.value = '';
+        if (sortFilter) sortFilter.value = 'newest';
+        this.filters = {};
+        this.updateURL();
+        this.resetGrid();
         this.loadMore();
       });
     }
+
+    // Set initial values from URL
+    if (categoryFilter) categoryFilter.value = this.filters.category_id || '';
+    if (subcategoryFilter) subcategoryFilter.value = this.filters.subcategory_id || '';
+    if (ageFilter) ageFilter.value = this.filters.age || '';
+    if (sortFilter) sortFilter.value = this.filters.sort || 'newest';
+  },
+
+  restoreFiltersFromURL() {
+    const params = new URLSearchParams(window.location.search);
+    this.filters = {
+      category_id: params.get('category_id') || '',
+      subcategory_id: params.get('subcategory_id') || '',
+      age: params.get('age') || '',
+      sort: params.get('sort') || 'newest',
+    };
+  },
+
+  updateURL() {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(this.filters)) {
+      if (value) params.set(key, value);
+    }
+    const newUrl = `${window.location.pathname}?${params.toString()}`;
+    window.history.replaceState({}, '', newUrl);
+  },
+
+  resetGrid() {
+    this.page = 1;
+    this.media = [];
+    this.hasMore = true;
+    this.favoriteCache.clear();
+    const grid = document.getElementById('mediaGrid');
+    if (grid) grid.innerHTML = '';
   },
 
   async loadCategories() {
@@ -79,7 +126,7 @@ const gallery = {
           this.loadMore();
         }
       });
-    }, { rootMargin: '200px' });
+    }, { rootMargin: '300px' });
 
     observer.observe(sentinel);
   },
@@ -87,7 +134,10 @@ const gallery = {
   async loadMore() {
     if (this.loading || !this.hasMore) return;
     this.loading = true;
-    document.getElementById('loadingSpinner').style.display = 'flex';
+    const spinner = document.getElementById('loadingSpinner');
+    const emptyState = document.getElementById('emptyState');
+    if (spinner) spinner.style.display = 'flex';
+    if (emptyState) emptyState.style.display = 'none';
 
     try {
       const endpoint = this.isFavorites ? '/api/favorites' : '/api/media';
@@ -98,22 +148,27 @@ const gallery = {
       });
       const response = await api.get(`${endpoint}?${params}`);
 
-      const items = this.isFavorites ? response : response.media;
+      const items = response.media || response;
 
       if (items.length === 0) {
         this.hasMore = false;
         if (this.page === 1 && this.media.length === 0) {
-          const grid = document.getElementById('mediaGrid');
-          grid.innerHTML = `
-            <div class="empty-state" style="grid-column: 1 / -1;">
-              <div class="empty-state-icon">🖼️</div>
-              <div class="empty-state-title">Галерея пуста</div>
-              <div class="empty-state-text">Загрузите медиа через админ-панель</div>
-            </div>
-          `;
+          if (emptyState) {
+            emptyState.style.display = 'flex';
+            const title = document.getElementById('emptyTitle');
+            const text = document.getElementById('emptyText');
+            if (this.isFavorites) {
+              if (title) title.textContent = 'Нет избранного';
+              if (text) text.textContent = 'Добавьте медиа в избранное, нажав на сердечко';
+            } else {
+              if (title) title.textContent = 'Галерея пуста';
+              if (text) text.textContent = 'Загрузите медиа через админ-панель';
+            }
+          }
         }
       } else {
         this.media.push(...items);
+        await this.fetchFavoriteStates(items);
         this.renderItems(items);
         this.page++;
       }
@@ -122,12 +177,30 @@ const gallery = {
       toast.show('Ошибка загрузки', 'error');
     } finally {
       this.loading = false;
-      document.getElementById('loadingSpinner').style.display = 'none';
+      if (spinner) spinner.style.display = 'none';
+    }
+  },
+
+  async fetchFavoriteStates(items) {
+    if (this.isFavorites) {
+      items.forEach(item => this.favoriteCache.set(item.id, true));
+      return;
+    }
+    const ids = items.map(i => i.id);
+    if (ids.length === 0) return;
+    try {
+      const result = await favorites.batchCheck(ids);
+      for (const [id, isFav] of Object.entries(result)) {
+        this.favoriteCache.set(parseInt(id, 10), isFav);
+      }
+    } catch (err) {
+      console.error('Batch favorite check failed:', err);
     }
   },
 
   renderItems(items) {
     const grid = document.getElementById('mediaGrid');
+    if (!grid) return;
     items.forEach((item, i) => {
       const card = this.createCard(item, this.media.length - items.length + i);
       grid.appendChild(card);
@@ -139,11 +212,17 @@ const gallery = {
     card.className = 'media-card';
     card.dataset.id = item.id;
     card.style.animationDelay = `${(index % 20) * 0.04}s`;
+    card.setAttribute('role', 'listitem');
+    card.setAttribute('tabindex', '0');
+    card.setAttribute('aria-label', `${item.type} ${item.age_rating !== null ? item.age_rating + ' лет' : ''}`);
 
     const isVideo = item.type === 'video';
     const mediaEl = document.createElement('img');
-    mediaEl.src = item.thumbnail_url || item.url;
+    // Use original URL for photos; thumbnail for videos to avoid loading full video
+    mediaEl.src = isVideo ? (item.thumbnail_url || item.url) : item.url;
     mediaEl.loading = 'lazy';
+    mediaEl.decoding = 'async';
+    mediaEl.alt = '';
     card.appendChild(mediaEl);
 
     const overlay = document.createElement('div');
@@ -159,16 +238,20 @@ const gallery = {
 
     const favBtn = document.createElement('button');
     favBtn.className = 'card-favorite';
+    favBtn.setAttribute('aria-label', 'Добавить в избранное');
     favBtn.innerHTML = `
       <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>
       </svg>
     `;
+    if (this.favoriteCache.get(item.id)) favBtn.classList.add('active');
+
     favBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       if (favBtn.classList.contains('active')) {
         await favorites.remove(item.id);
         favBtn.classList.remove('active');
+        this.favoriteCache.set(item.id, false);
         if (this.isFavorites) {
           card.style.opacity = '0';
           card.style.transform = 'scale(0.9)';
@@ -177,17 +260,15 @@ const gallery = {
       } else {
         await favorites.add(item.id);
         favBtn.classList.add('active');
+        this.favoriteCache.set(item.id, true);
       }
     });
     card.appendChild(favBtn);
 
-    favorites.check(item.id).then(isFav => {
-      if (isFav) favBtn.classList.add('active');
-    });
-
     if (isVideo) {
       const playBtn = document.createElement('button');
       playBtn.className = 'card-play';
+      playBtn.setAttribute('aria-label', 'Воспроизвести видео');
       playBtn.innerHTML = `
         <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
           <polygon points="5 3 19 12 5 21 5 3"/>
@@ -197,6 +278,12 @@ const gallery = {
     }
 
     card.addEventListener('click', () => this.openModal(item.id));
+    card.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        this.openModal(item.id);
+      }
+    });
 
     return card;
   },
@@ -204,13 +291,14 @@ const gallery = {
   setupModal() {
     const modal = document.getElementById('mediaModal');
     const closeBtn = document.getElementById('modalClose');
+    const overlay = document.getElementById('modalOverlay');
     const prevBtn = document.getElementById('modalPrev');
     const nextBtn = document.getElementById('modalNext');
     const favoriteBtn = document.getElementById('modalFavorite');
 
-    if (closeBtn) {
-      closeBtn.addEventListener('click', () => this.closeModal());
-    }
+    const close = () => this.closeModal();
+    if (closeBtn) closeBtn.addEventListener('click', close);
+    if (overlay) overlay.addEventListener('click', close);
 
     if (prevBtn) {
       prevBtn.addEventListener('click', () => this.navigateModal(-1));
@@ -228,9 +316,11 @@ const gallery = {
         if (isFav) {
           await favorites.remove(currentId);
           favoriteBtn.classList.remove('active');
+          this.favoriteCache.set(currentId, false);
         } else {
           await favorites.add(currentId);
           favoriteBtn.classList.add('active');
+          this.favoriteCache.set(currentId, true);
         }
       });
     }
@@ -245,7 +335,7 @@ const gallery = {
     let touchStartX = 0;
     modal.addEventListener('touchstart', (e) => {
       touchStartX = e.touches[0].clientX;
-    });
+    }, { passive: true });
     modal.addEventListener('touchend', (e) => {
       const touchEndX = e.changedTouches[0].clientX;
       const diff = touchStartX - touchEndX;
@@ -253,7 +343,7 @@ const gallery = {
         if (diff > 0) this.navigateModal(1);
         else this.navigateModal(-1);
       }
-    });
+    }, { passive: true });
 
     document.addEventListener('mousemove', (e) => {
       const z = this.zoom;
@@ -295,13 +385,17 @@ const gallery = {
 
     const isVideo = item.type === 'video';
     const mediaEl = document.createElement(isVideo ? 'video' : 'img');
-    mediaEl.src = item.url || item.s3_url;
+    mediaEl.src = item.url;
+    mediaEl.dataset.fullSrc = item.url;
     mediaEl.controls = isVideo;
     mediaEl.style.width = '100%';
     mediaEl.style.height = '100%';
     mediaEl.style.objectFit = 'contain';
+    mediaEl.setAttribute('aria-label', isVideo ? 'Видео' : 'Изображение');
+
     if (isVideo) {
       mediaEl.autoplay = true;
+      mediaEl.src = item.url;
     } else {
       const zoom = {
         el: mediaEl,
@@ -350,23 +444,33 @@ const gallery = {
 
       this.zoom = zoom;
     }
+
     container.appendChild(mediaEl);
 
     ageEl.textContent = item.age_rating !== null ? (item.age_rating >= 19 ? `${item.age_rating}+` : `${item.age_rating}`) : '';
     ageEl.style.display = item.age_rating !== null ? 'inline-block' : 'none';
 
-    favorites.check(id).then(isFav => {
-      if (isFav) favoriteBtn.classList.add('active');
-      else favoriteBtn.classList.remove('active');
-    });
+    if (this.favoriteCache.has(id)) {
+      favoriteBtn.classList.toggle('active', this.favoriteCache.get(id));
+    } else {
+      favorites.check(id).then(isFav => {
+        this.favoriteCache.set(id, isFav);
+        favoriteBtn.classList.toggle('active', isFav);
+      });
+    }
 
     modal.classList.add('active');
+    modal.setAttribute('aria-hidden', 'false');
     document.body.style.overflow = 'hidden';
+    this.setupFocusTrap(modal);
+    const closeBtn = document.getElementById('modalClose');
+    if (closeBtn) closeBtn.focus();
   },
 
   closeModal() {
     const modal = document.getElementById('mediaModal');
     modal.classList.remove('active');
+    modal.setAttribute('aria-hidden', 'true');
     document.body.style.overflow = '';
 
     if (this.scrollPosition !== undefined) {
@@ -375,6 +479,33 @@ const gallery = {
 
     this.currentModalId = null;
     this.zoom = null;
+    this.removeFocusTrap();
+  },
+
+  setupFocusTrap(element) {
+    const focusable = element.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    if (focusable.length === 0) return;
+    this.focusTrap = (e) => {
+      if (e.key !== 'Tab') return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    element.addEventListener('keydown', this.focusTrap);
+  },
+
+  removeFocusTrap() {
+    const modal = document.getElementById('mediaModal');
+    if (this.focusTrap && modal) {
+      modal.removeEventListener('keydown', this.focusTrap);
+      this.focusTrap = null;
+    }
   },
 
   async navigateModal(direction) {

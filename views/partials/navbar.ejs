@@ -1,24 +1,26 @@
 <nav class="navbar" id="navbar">
   <div class="navbar-container">
     <a href="/" class="navbar-logo">RskMedia</a>
-    <button class="navbar-toggle" id="navbarToggle" aria-label="Toggle menu">
+    <button class="navbar-toggle" id="navbarToggle" aria-label="Toggle menu" aria-expanded="false">
       <span></span>
       <span></span>
       <span></span>
     </button>
     <div class="navbar-menu" id="navbarMenu">
-      <a href="/" class="navbar-link">
+      <a href="/" class="navbar-link <%= activePage === 'home' ? 'active' : '' %>">
         <i data-lucide="home" style="width:16px;height:16px"></i>
         Главная
       </a>
-      <a href="/favorites" class="navbar-link">
+      <a href="/favorites" class="navbar-link <%= activePage === 'favorites' ? 'active' : '' %>">
         <i data-lucide="heart" style="width:16px;height:16px"></i>
         Избранное
       </a>
-      <a href="/admin" class="navbar-link navbar-link-admin" id="adminLink" style="display:none;">
+      <% if (user && user.type === 'admin') { %>
+      <a href="/admin" class="navbar-link navbar-link-admin <%= activePage === 'admin' ? 'active' : '' %>">
         <i data-lucide="shield" style="width:16px;height:16px"></i>
         Админ
       </a>
+      <% } %>
       <button class="navbar-link navbar-btn" id="logoutBtn">
         <i data-lucide="log-out" style="width:16px;height:16px"></i>
         Выход

@@ -1,8 +1,7 @@
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 const UserModel = require('../models/user');
-
-const JWT_SECRET = process.env.JWT_SECRET;
-const JWT_EXPIRES = '7d';
+const { setAuthCookie, clearAuthCookie, JWT_SECRET, JWT_EXPIRES } = require('../middleware/auth');
 
 const AuthController = {
   async login(req, res) {
@@ -24,18 +23,31 @@ const AuthController = {
     const tokenPayload = {
       token_id: user.id,
       type: user.type,
-      expires_at: user.expires_at,
     };
 
     const jwtToken = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: JWT_EXPIRES });
 
+    // Store a hash of the JWT in DB for server-side invalidation
+    const jwtHash = await bcrypt.hash(jwtToken, 10);
+    await UserModel.updateJwtHash(user.id, jwtHash);
+
+    setAuthCookie(res, jwtToken);
+    console.log(`Login successful for token_id=${user.id}, type=${user.type}`);
+
     res.json({
-      token: jwtToken,
       type: user.type,
     });
   },
 
-  logout(req, res) {
+  async logout(req, res) {
+    try {
+      if (req.user?.token_id) {
+        await UserModel.clearJwtHash(req.user.token_id);
+      }
+    } catch (err) {
+      console.error('Logout error:', err);
+    }
+    clearAuthCookie(res);
     res.json({ message: 'Logged out successfully' });
   },
 };

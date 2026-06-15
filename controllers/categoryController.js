@@ -9,23 +9,47 @@ const CategoryController = {
 
   async create(req, res) {
     const { name } = req.body;
-    if (!name) return res.status(400).json({ error: 'Name is required' });
-    const category = await CategoryModel.create(name);
-    res.status(201).json(category);
+    try {
+      const category = await CategoryModel.create(name);
+      res.status(201).json(category);
+    } catch (err) {
+      if (err.code === '23505') {
+        return res.status(409).json({ error: 'Category already exists' });
+      }
+      throw err;
+    }
   },
 
   async update(req, res) {
     const { id } = req.params;
     const { name } = req.body;
-    if (!name) return res.status(400).json({ error: 'Name is required' });
-    const category = await CategoryModel.update(id, name);
-    res.json(category);
+    try {
+      const category = await CategoryModel.update(id, name);
+      if (!category) return res.status(404).json({ error: 'Category not found' });
+      res.json(category);
+    } catch (err) {
+      if (err.code === '23505') {
+        return res.status(409).json({ error: 'Category name already exists' });
+      }
+      throw err;
+    }
   },
 
   async delete(req, res) {
     const { id } = req.params;
-    await CategoryModel.delete(id);
-    res.json({ message: 'Category deleted' });
+    try {
+      const count = await CategoryModel.getMediaCount(id);
+      if (count > 0) {
+        return res.status(409).json({ error: `Cannot delete category with ${count} media items` });
+      }
+      await CategoryModel.delete(id);
+      res.json({ message: 'Category deleted' });
+    } catch (err) {
+      if (err.code === '23503') {
+        return res.status(409).json({ error: 'Cannot delete category with subcategories' });
+      }
+      throw err;
+    }
   },
 
   async getAllSubcategories(req, res) {
@@ -39,11 +63,34 @@ const CategoryController = {
     res.json(subcategories);
   },
 
+  async deleteSubcategory(req, res) {
+    const { id } = req.params;
+    try {
+      await SubcategoryModel.delete(id);
+      res.json({ message: 'Subcategory deleted' });
+    } catch (err) {
+      if (err.code === '23503') {
+        return res.status(409).json({ error: 'Cannot delete subcategory with media' });
+      }
+      throw err;
+    }
+  },
+
   async createSubcategory(req, res) {
     const { categoryId, name } = req.body;
-    if (!categoryId || !name) return res.status(400).json({ error: 'Category ID and name are required' });
-    const subcategory = await SubcategoryModel.create(categoryId, name);
-    res.status(201).json(subcategory);
+    const category = await CategoryModel.getById(categoryId);
+    if (!category) {
+      return res.status(404).json({ error: 'Category not found' });
+    }
+    try {
+      const subcategory = await SubcategoryModel.create(categoryId, name);
+      res.status(201).json(subcategory);
+    } catch (err) {
+      if (err.code === '23505') {
+        return res.status(409).json({ error: 'Subcategory already exists in this category' });
+      }
+      throw err;
+    }
   },
 };
 

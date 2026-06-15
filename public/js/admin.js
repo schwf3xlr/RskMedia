@@ -1,8 +1,17 @@
 import { auth, api, toast, categories } from './main.js';
 
-if (!auth.isAdmin()) {
-  window.location.href = '/';
-}
+// Server-side middleware already ensures admin access for /admin route.
+// If this script somehow runs without admin rights, backend calls will fail with 403.
+
+const state = {
+  adminMissingFilters: [],
+  currentMediaPage: 1,
+  allAdminCategories: [],
+  adminLoading: false,
+  adminHasMore: true,
+  adminObserver: null,
+  allSelected: false,
+};
 
 const tabs = document.querySelectorAll('.admin-tab');
 const panels = document.querySelectorAll('.admin-panel');
@@ -16,42 +25,51 @@ tabs.forEach(tab => {
     document.getElementById(`${target}Panel`).classList.add('active');
 
     if (target === 'batch') {
-      adminHasMore = true;
-      adminLoading = false;
-      currentMediaPage = 1;
+      resetBatchGrid();
       loadMediaCards(1, false).then(() => setupAdminInfiniteScroll());
     }
     if (target === 'tokens') loadTokens();
-    if (target === 'duplicates') lucide.createIcons();
+    if (target === 'categories') loadCategoriesPanel();
   });
 });
 
-let adminMissingFilters = [];
+function resetBatchGrid() {
+  state.adminHasMore = true;
+  state.adminLoading = false;
+  state.currentMediaPage = 1;
+  state.allSelected = false;
+  const selectAllBtn = document.getElementById('selectAllBtn');
+  if (selectAllBtn) {
+    selectAllBtn.innerHTML = '<i data-lucide="check-square" style="width:14px;height:14px"></i> Выбрать всё';
+  }
+  updateSelectedCount();
+}
 
 document.querySelectorAll('.admin-missing-filter').forEach(cb => {
   cb.addEventListener('change', () => {
-    adminMissingFilters = Array.from(document.querySelectorAll('.admin-missing-filter:checked'))
+    state.adminMissingFilters = Array.from(document.querySelectorAll('.admin-missing-filter:checked'))
       .map(c => c.dataset.field);
-    adminHasMore = true;
-    adminLoading = false;
-    currentMediaPage = 1;
+    resetBatchGrid();
     const grid = document.getElementById('mediaCards');
-    grid.innerHTML = '';
-    if (adminObserver) adminObserver.disconnect();
+    if (grid) grid.innerHTML = '';
+    if (state.adminObserver) state.adminObserver.disconnect();
     loadMediaCards(1, false).then(() => setupAdminInfiniteScroll());
   });
 });
 
 async function loadAdminCategories() {
   const cats = await categories.loadAll();
-  const selects = ['singleCategory', 'batchCategory', 'batchSetCategory'];
+  state.allAdminCategories = cats;
+  const selects = ['singleCategory', 'batchCategory', 'batchSetCategory', 'newSubcategoryCategory'];
   selects.forEach(id => {
     const select = document.getElementById(id);
-    if (select) categories.populateSelect(select, cats, id.includes('Set') ? 'Установить категорию' : 'Без категории');
+    if (select) {
+      const emptyLabel = id === 'batchSetCategory' ? 'Установить категорию' : id === 'newSubcategoryCategory' ? 'Выберите категорию' : 'Без категории';
+      categories.populateSelect(select, cats, emptyLabel);
+    }
   });
 }
 
-// Batch subcategory: load when category changes
 const batchSetCategory = document.getElementById('batchSetCategory');
 if (batchSetCategory) {
   batchSetCategory.addEventListener('change', async () => {
@@ -100,17 +118,15 @@ function setupDropZone(dropZoneId, fileInputId) {
     e.preventDefault();
     dropZone.classList.remove('dragover');
     fileInput.files = e.dataTransfer.files;
-    const event = new Event('change', { bubbles: true });
-    fileInput.dispatchEvent(event);
+    fileInput.dispatchEvent(new Event('change', { bubbles: true }));
   });
 
   fileInput.addEventListener('change', () => {
     const files = fileInput.files;
+    const text = dropZone.querySelector('.file-drop-zone-text');
     if (files.length === 1) {
-      const text = dropZone.querySelector('.file-drop-zone-text');
       text.innerHTML = `<strong>Выбран: ${files[0].name}</strong>`;
     } else if (files.length > 1) {
-      const text = dropZone.querySelector('.file-drop-zone-text');
       text.innerHTML = `<strong>Выбрано: ${files.length} файлов</strong>`;
     }
   });
@@ -139,7 +155,7 @@ document.getElementById('singleUploadForm')?.addEventListener('submit', async (e
   try {
     const response = await fetch('/api/media/upload/single', {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${auth.getToken()}` },
+      credentials: 'same-origin',
       body: formData,
     });
 
@@ -190,8 +206,9 @@ document.getElementById('batchUploadForm')?.addEventListener('submit', async (e)
     return { file, item, status: item.querySelector('.queue-status'), progress: item.querySelector('.queue-progress-fill') };
   });
 
-  for (let i = 0; i < queueItems.length; i += 2) {
-    const batch = queueItems.slice(i, i + 2);
+  const CONCURRENCY = 3;
+  for (let i = 0; i < queueItems.length; i += CONCURRENCY) {
+    const batch = queueItems.slice(i, i + CONCURRENCY);
     await Promise.all(batch.map(async ({ file, status, progress }) => {
       status.textContent = 'Загрузка...';
       progress.style.width = '50%';
@@ -205,7 +222,7 @@ document.getElementById('batchUploadForm')?.addEventListener('submit', async (e)
       try {
         const response = await fetch('/api/media/upload/multiple', {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${auth.getToken()}` },
+          credentials: 'same-origin',
           body: formData,
         });
 
@@ -229,18 +246,12 @@ document.getElementById('batchUploadForm')?.addEventListener('submit', async (e)
   lucide.createIcons();
 });
 
-let currentMediaPage = 1;
-let allAdminCategories = [];
-let allAdminSubcategories = {};
-let adminLoading = false;
-let adminHasMore = true;
-let adminObserver = null;
-
 async function loadMediaCards(page = 1, append = false) {
-  if (adminLoading || !adminHasMore) return;
-  adminLoading = true;
-  currentMediaPage = page;
+  if (state.adminLoading || !state.adminHasMore) return;
+  state.adminLoading = true;
+  state.currentMediaPage = page;
   const grid = document.getElementById('mediaCards');
+  if (!grid) return;
 
   if (!append) {
     grid.innerHTML = '<div class="skeleton-grid">' + Array(8).fill('<div class="skeleton-card"><div class="skeleton-thumb"></div><div class="skeleton-controls"><div class="skeleton-line"></div><div class="skeleton-line short"></div></div></div>').join('') + '</div>';
@@ -248,15 +259,17 @@ async function loadMediaCards(page = 1, append = false) {
 
   try {
     let url = `/api/admin/media?page=${page}&limit=50`;
-    if (adminMissingFilters.length > 0) {
-      url += `&missing=${adminMissingFilters.join(',')}`;
+    if (state.adminMissingFilters.length > 0) {
+      url += `&missing=${state.adminMissingFilters.join(',')}`;
     }
+    console.log('Loading admin media:', url);
     const data = await api.get(url);
-    adminHasMore = page < data.totalPages;
+    console.log('Admin media response:', data);
+    state.adminHasMore = page < data.totalPages;
 
     if (!append) grid.innerHTML = '';
 
-    if (data.media.length === 0 && !append) {
+    if (!data.media || data.media.length === 0 && !append) {
       grid.innerHTML = `
         <div class="empty-state" style="grid-column:1/-1">
           <div class="empty-state-icon">🖼️</div>
@@ -264,9 +277,6 @@ async function loadMediaCards(page = 1, append = false) {
           <div class="empty-state-text">Загрузите файлы во вкладке "Загрузка"</div>
         </div>`;
     } else {
-      if (!allAdminCategories.length) {
-        allAdminCategories = await categories.loadAll();
-      }
       data.media.forEach((item, i) => {
         const startIndex = (page - 1) * 50;
         const card = createAdminCard(item, startIndex + i);
@@ -277,11 +287,12 @@ async function loadMediaCards(page = 1, append = false) {
     updateSelectedCount();
     lucide.createIcons();
   } catch (err) {
+    console.error('Failed to load admin media:', err);
     if (!append) {
-      grid.innerHTML = '<div class="skeleton-grid">' + Array(8).fill('<div class="skeleton-card"><div class="skeleton-thumb"></div><div class="skeleton-controls"><div class="skeleton-line"></div><div class="skeleton-line short"></div></div></div>').join('') + '</div>';
+      grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><div class="empty-state-icon">⚠️</div><div class="empty-state-title">Ошибка загрузки</div><div class="empty-state-text">' + (err.message || 'Не удалось загрузить медиа') + '</div></div>';
     }
   } finally {
-    adminLoading = false;
+    state.adminLoading = false;
   }
 }
 
@@ -289,17 +300,17 @@ function setupAdminInfiniteScroll() {
   const sentinel = document.getElementById('adminGridSentinel');
   if (!sentinel) return;
 
-  if (adminObserver) adminObserver.disconnect();
+  if (state.adminObserver) state.adminObserver.disconnect();
 
-  adminObserver = new IntersectionObserver((entries) => {
+  state.adminObserver = new IntersectionObserver((entries) => {
     entries.forEach(entry => {
-      if (entry.isIntersecting && !adminLoading && adminHasMore) {
-        loadMediaCards(currentMediaPage + 1, true);
+      if (entry.isIntersecting && !state.adminLoading && state.adminHasMore) {
+        loadMediaCards(state.currentMediaPage + 1, true);
       }
     });
   }, { rootMargin: '300px' });
 
-  adminObserver.observe(sentinel);
+  state.adminObserver.observe(sentinel);
 }
 
 function showConfirm(message) {
@@ -320,22 +331,16 @@ function showConfirm(message) {
     document.body.style.overflow = 'hidden';
     lucide.createIcons();
 
-    overlay.querySelector('#confirmCancel').addEventListener('click', () => {
+    const close = (result) => {
       overlay.remove();
       document.body.style.overflow = '';
-      resolve(false);
-    });
-    overlay.querySelector('#confirmOk').addEventListener('click', () => {
-      overlay.remove();
-      document.body.style.overflow = '';
-      resolve(true);
-    });
+      resolve(result);
+    };
+
+    overlay.querySelector('#confirmCancel').addEventListener('click', () => close(false));
+    overlay.querySelector('#confirmOk').addEventListener('click', () => close(true));
     overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) {
-        overlay.remove();
-        document.body.style.overflow = '';
-        resolve(false);
-      }
+      if (e.target === overlay) close(false);
     });
   });
 }
@@ -349,6 +354,7 @@ function createAdminCard(item, index = 0) {
   const img = document.createElement('img');
   img.src = item.thumbnail_url || item.url;
   img.className = 'admin-card-thumb';
+  img.loading = 'lazy';
   img.addEventListener('click', () => openPreview(item));
   card.appendChild(img);
 
@@ -370,12 +376,11 @@ function createAdminCard(item, index = 0) {
   checkbox.addEventListener('change', updateSelectedCount);
   card.appendChild(checkbox);
 
-  // Category select
   const catSelect = document.createElement('select');
   catSelect.className = 'admin-card-select';
   catSelect.dataset.field = 'category';
   catSelect.innerHTML = '<option value="">Категория</option>' +
-    allAdminCategories.map(c => `<option value="${c.id}" ${c.id === item.category_id ? 'selected' : ''}>${c.name}</option>`).join('');
+    state.allAdminCategories.map(c => `<option value="${c.id}" ${c.id === item.category_id ? 'selected' : ''}>${c.name}</option>`).join('');
   catSelect.addEventListener('change', async () => {
     const subSelect = card.querySelector('[data-field="subcategory"]');
     if (subSelect) {
@@ -387,7 +392,6 @@ function createAdminCard(item, index = 0) {
   });
   controls.appendChild(catSelect);
 
-  // Subcategory select (initial options)
   const subSelect = document.createElement('select');
   subSelect.className = 'admin-card-select';
   subSelect.dataset.field = 'subcategory';
@@ -397,7 +401,6 @@ function createAdminCard(item, index = 0) {
   });
   controls.appendChild(subSelect);
 
-  // Pre-load subcategories if category set
   if (item.category_id) {
     categories.loadSubcategories(item.category_id).then(subs => {
       subSelect.innerHTML = '<option value="">Подкатегория</option>' +
@@ -405,7 +408,6 @@ function createAdminCard(item, index = 0) {
     });
   }
 
-  // Age select
   const ageSelect = document.createElement('select');
   ageSelect.className = 'admin-card-select';
   ageSelect.innerHTML = '<option value="">Возраст</option>' +
@@ -415,7 +417,6 @@ function createAdminCard(item, index = 0) {
   });
   controls.appendChild(ageSelect);
 
-  // Delete button
   const delBtn = document.createElement('button');
   delBtn.className = 'btn btn-danger btn-sm';
   delBtn.innerHTML = '<i data-lucide="trash-2" style="width:14px;height:14px"></i>';
@@ -443,7 +444,7 @@ function openPreview(item) {
     <div class="modal-media-full">
       ${item.type === 'video'
         ? `<video src="${item.url}" controls autoplay style="width:100%;height:100%;object-fit:contain"></video>`
-        : `<img src="${item.url}" style="width:100%;height:100%;object-fit:contain">`}
+        : `<img src="${item.url}" style="width:100%;height:100%;object-fit:contain" alt="">`}
     </div>
     <button class="modal-close" id="previewClose">
       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
@@ -452,14 +453,12 @@ function openPreview(item) {
   document.body.appendChild(modal);
   document.body.style.overflow = 'hidden';
 
-  modal.querySelector('.modal-overlay').addEventListener('click', () => {
+  const close = () => {
     modal.remove();
     document.body.style.overflow = '';
-  });
-  modal.querySelector('#previewClose').addEventListener('click', () => {
-    modal.remove();
-    document.body.style.overflow = '';
-  });
+  };
+  modal.querySelector('.modal-overlay').addEventListener('click', close);
+  modal.querySelector('#previewClose').addEventListener('click', close);
 }
 
 function updateSelectedCount() {
@@ -470,20 +469,12 @@ function updateSelectedCount() {
   }
 }
 
-document.addEventListener('change', (e) => {
-  if (e.target.classList.contains('admin-card-checkbox')) {
-    updateSelectedCount();
-  }
-});
-
-let allSelected = false;
-
 document.getElementById('selectAllBtn')?.addEventListener('click', () => {
   const checkboxes = document.querySelectorAll('.admin-card-checkbox');
-  allSelected = !allSelected;
-  checkboxes.forEach(cb => cb.checked = allSelected);
+  state.allSelected = !state.allSelected;
+  checkboxes.forEach(cb => cb.checked = state.allSelected);
   const btn = document.getElementById('selectAllBtn');
-  if (allSelected) {
+  if (state.allSelected) {
     btn.innerHTML = '<i data-lucide="square" style="width:14px;height:14px"></i> Снять всё';
   } else {
     btn.innerHTML = '<i data-lucide="check-square" style="width:14px;height:14px"></i> Выбрать всё';
@@ -517,12 +508,8 @@ document.getElementById('applyBatch')?.addEventListener('click', async () => {
   try {
     await api.put('/api/media/batch-update', updates);
     toast.show('Изменения применены');
-    adminHasMore = true;
-    adminLoading = false;
-    currentMediaPage = 1;
+    resetBatchGrid();
     loadMediaCards(1, false);
-    allSelected = false;
-    document.getElementById('selectAllBtn').innerHTML = '<i data-lucide="check-square" style="width:14px;height:14px"></i> Выбрать всё';
   } catch (err) {
     toast.show(err.message, 'error');
   }
@@ -541,33 +528,135 @@ document.getElementById('deleteBatch')?.addEventListener('click', async () => {
   try {
     await api.post('/api/media/batch-delete', { ids });
     toast.show('Элементы удалены');
-    adminHasMore = true;
-    adminLoading = false;
-    currentMediaPage = 1;
+    resetBatchGrid();
     loadMediaCards(1, false);
-    allSelected = false;
-    document.getElementById('selectAllBtn').innerHTML = '<i data-lucide="check-square" style="width:14px;height:14px"></i> Выбрать всё';
   } catch (err) {
     toast.show(err.message, 'error');
   }
 });
 
-window.deleteSingleMedia = async function(id) {
+async function deleteSingleMedia(id) {
   if (!await showConfirm('Удалить это медиа?')) return;
   try {
     await api.delete(`/api/media/${id}`);
     toast.show('Медиа удалено');
-    adminHasMore = true;
-    adminLoading = false;
-    currentMediaPage = 1;
+    resetBatchGrid();
     loadMediaCards(1, false);
-    allSelected = false;
-    document.getElementById('selectAllBtn').innerHTML = '<i data-lucide="check-square" style="width:14px;height:14px"></i> Выбрать всё';
   } catch (err) {
     toast.show(err.message, 'error');
   }
-};
+}
 
+// === CATEGORIES ===
+async function loadCategoriesPanel() {
+  await loadAdminCategories();
+  const tbody = document.getElementById('categoriesTableBody');
+  if (!tbody) return;
+
+  const [cats, subs] = await Promise.all([
+    categories.loadAll(),
+    api.get('/api/categories/subcategories'),
+  ]);
+
+  tbody.innerHTML = '';
+  if (cats.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="3"><div class="empty-state"><div class="empty-state-icon">📁</div><div class="empty-state-title">Нет категорий</div></div></td></tr>';
+    return;
+  }
+
+  const subsByCat = new Map();
+  subs.forEach(s => {
+    if (!subsByCat.has(s.category_id)) subsByCat.set(s.category_id, []);
+    subsByCat.get(s.category_id).push(s);
+  });
+
+  cats.forEach(cat => {
+    const row = document.createElement('tr');
+    const catSubs = subsByCat.get(cat.id) || [];
+    const subsHtml = catSubs.length === 0
+      ? '-'
+      : catSubs.map(s => `
+          <span class="subcategory-tag">
+            ${s.name}
+            <button class="btn-icon btn-danger-subcategory" data-delete-subcategory="${s.id}" title="Удалить подкатегорию">
+              <i data-lucide="x" style="width:12px;height:12px"></i>
+            </button>
+          </span>
+        `).join('');
+    row.innerHTML = `
+      <td>${cat.name}</td>
+      <td class="subcategory-list">${subsHtml}</td>
+      <td>
+        <button class="btn btn-danger btn-sm" data-delete-category="${cat.id}" title="Удалить категорию">
+          <i data-lucide="trash-2" style="width:14px;height:14px"></i>
+        </button>
+      </td>
+    `;
+    row.querySelector('[data-delete-category]').addEventListener('click', async () => {
+      if (!await showConfirm(`Удалить категорию "${cat.name}"?`)) return;
+      try {
+        await api.delete(`/api/categories/${cat.id}`);
+        toast.show('Категория удалена');
+        await loadAdminCategories();
+        loadCategoriesPanel();
+      } catch (err) {
+        toast.show(err.message, 'error');
+      }
+    });
+    row.querySelectorAll('[data-delete-subcategory]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const subId = btn.dataset.deleteSubcategory;
+        const subName = catSubs.find(s => s.id == subId)?.name || '';
+        if (!await showConfirm(`Удалить подкатегорию "${subName}"?`)) return;
+        try {
+          await api.delete(`/api/categories/subcategories/${subId}`);
+          toast.show('Подкатегория удалена');
+          loadCategoriesPanel();
+        } catch (err) {
+          toast.show(err.message, 'error');
+        }
+      });
+    });
+    tbody.appendChild(row);
+  });
+  lucide.createIcons();
+}
+
+document.getElementById('createCategoryBtn')?.addEventListener('click', async () => {
+  const input = document.getElementById('newCategoryName');
+  const name = input.value.trim();
+  if (!name) return;
+  try {
+    await api.post('/api/categories', { name });
+    toast.show('Категория создана');
+    input.value = '';
+    await loadAdminCategories();
+    loadCategoriesPanel();
+  } catch (err) {
+    toast.show(err.message, 'error');
+  }
+});
+
+document.getElementById('createSubcategoryBtn')?.addEventListener('click', async () => {
+  const categorySelect = document.getElementById('newSubcategoryCategory');
+  const input = document.getElementById('newSubcategoryName');
+  const categoryId = categorySelect.value;
+  const name = input.value.trim();
+  if (!categoryId || !name) {
+    toast.show('Выберите категорию и введите название', 'error');
+    return;
+  }
+  try {
+    await api.post('/api/categories/subcategories', { categoryId, name });
+    toast.show('Подкатегория создана');
+    input.value = '';
+    loadCategoriesPanel();
+  } catch (err) {
+    toast.show(err.message, 'error');
+  }
+});
+
+// === TOKENS ===
 async function loadTokens() {
   const tbody = document.getElementById('tokensTableBody');
   tbody.innerHTML = '<tr><td colspan="6" class="loading-cell">Загрузка...</td></tr>';
@@ -579,28 +668,100 @@ async function loadTokens() {
     if (tokens.length === 0) {
       tbody.innerHTML = '<tr><td colspan="6"><div class="empty-state"><div class="empty-state-icon">🔐</div><div class="empty-state-title">Нет токенов</div><div class="empty-state-text">Создайте токен для нового пользователя</div></div></td></tr>';
     } else {
+      const currentTokenId = window.currentUserTokenId;
       tokens.forEach(token => {
         const row = document.createElement('tr');
         const isActive = token.is_active;
+        const isCurrentUser = token.id === currentTokenId;
         const statusBadge = isActive
           ? '<span class="badge badge-active">активен</span>'
           : '<span class="badge badge-inactive">неактивен</span>';
+        const tokenIdSafe = `token-value-${token.id}`;
         row.innerHTML = `
-          <td><code style="font-family:var(--font-display);font-size:13px;background:var(--bg-2);padding:4px 8px;border-radius:4px;border:1px solid var(--border)">${token.token}</code></td>
+          <td>
+            <code class="token-code" id="${tokenIdSafe}" style="display:none">${token.token}</code>
+            <span class="token-mask" id="${tokenIdSafe}-mask">••••••••••••</span>
+            <button class="btn btn-sm btn-secondary" data-toggle-visibility="${token.id}" style="margin-left:8px">
+              <i data-lucide="eye" style="width:14px;height:14px"></i>
+              Показать
+            </button>
+            <button class="btn btn-sm btn-secondary" data-copy-token="${token.id}" style="margin-left:4px">
+              <i data-lucide="copy" style="width:14px;height:14px"></i>
+            </button>
+          </td>
           <td><span class="badge badge-${token.type}">${token.type}</span></td>
           <td><span class="table-cell-date">${new Date(token.created_at).toLocaleDateString()}</span></td>
-          <td><span class="table-cell-date">${token.expires_at ? new Date(token.expires_at).toLocaleDateString() : 'Никогда'}</span></td>
+          <td>
+            <span class="table-cell-date" id="token-expires-${token.id}">${token.expires_at ? new Date(token.expires_at).toLocaleDateString() : 'Никогда'}</span>
+            <input type="date" class="token-expires-input" id="token-expires-input-${token.id}" value="${token.expires_at ? token.expires_at.split('T')[0] : ''}" style="display:none">
+            <button class="btn btn-sm btn-secondary" data-edit-expires="${token.id}" style="margin-left:4px">
+              <i data-lucide="pencil" style="width:14px;height:14px"></i>
+            </button>
+            <button class="btn btn-sm btn-primary" data-save-expires="${token.id}" id="token-save-expires-${token.id}" style="display:none;margin-left:4px">
+              <i data-lucide="check" style="width:14px;height:14px"></i>
+            </button>
+          </td>
           <td>${statusBadge}</td>
           <td>
-            <button class="btn ${isActive ? 'btn-danger' : 'btn-primary'} btn-sm" onclick="toggleToken(${token.id}, ${!isActive})">
+            <button class="btn ${isActive ? 'btn-danger' : 'btn-primary'} btn-sm" data-toggle-token="${token.id}" data-active="${!isActive}">
               <i data-lucide="${isActive ? 'x' : 'check'}" style="width:14px;height:14px"></i>
               ${isActive ? 'Деактивировать' : 'Активировать'}
             </button>
-            <button class="btn btn-danger btn-sm" onclick="deleteToken(${token.id})" style="margin-left:4px">
+            <button class="btn btn-danger btn-sm" data-delete-token="${token.id}" style="margin-left:4px" ${isCurrentUser ? 'disabled title="Нельзя удалить текущий токен"' : ''}>
               <i data-lucide="trash-2" style="width:14px;height:14px"></i>
             </button>
           </td>
         `;
+        row.querySelector('[data-toggle-token]').addEventListener('click', async (e) => {
+          const btn = e.currentTarget;
+          const id = btn.dataset.toggleToken;
+          const active = btn.dataset.active === 'true';
+          await toggleToken(id, active);
+        });
+        row.querySelector('[data-delete-token]').addEventListener('click', async (e) => {
+          const id = e.currentTarget.dataset.deleteToken;
+          await deleteToken(id);
+        });
+        row.querySelector('[data-toggle-visibility]').addEventListener('click', (e) => {
+          const id = e.currentTarget.dataset.toggleVisibility;
+          const valueEl = document.getElementById(`token-value-${id}`);
+          const maskEl = document.getElementById(`token-value-${id}-mask`);
+          const isHidden = valueEl.style.display === 'none';
+          valueEl.style.display = isHidden ? 'inline' : 'none';
+          maskEl.style.display = isHidden ? 'none' : 'inline';
+          e.currentTarget.innerHTML = isHidden
+            ? '<i data-lucide="eye-off" style="width:14px;height:14px"></i> Скрыть'
+            : '<i data-lucide="eye" style="width:14px;height:14px"></i> Показать';
+          lucide.createIcons();
+        });
+        row.querySelector('[data-copy-token]').addEventListener('click', async (e) => {
+          const id = e.currentTarget.dataset.copyToken;
+          const tokenValue = document.getElementById(`token-value-${id}`).textContent;
+          try {
+            await navigator.clipboard.writeText(tokenValue);
+            toast.show('Токен скопирован');
+          } catch {
+            toast.show('Не удалось скопировать', 'error');
+          }
+        });
+        row.querySelector('[data-edit-expires]').addEventListener('click', (e) => {
+          const id = e.currentTarget.dataset.editExpires;
+          document.getElementById(`token-expires-${id}`).style.display = 'none';
+          document.getElementById(`token-expires-input-${id}`).style.display = 'inline-block';
+          document.getElementById(`token-save-expires-${id}`).style.display = 'inline-flex';
+        });
+        row.querySelector('[data-save-expires]').addEventListener('click', async (e) => {
+          const id = e.currentTarget.dataset.saveExpires;
+          const input = document.getElementById(`token-expires-input-${id}`);
+          const newDate = input.value || null;
+          try {
+            await api.put(`/api/admin/tokens/${id}`, { expires_at: newDate });
+            toast.show('Дата обновлена');
+            loadTokens();
+          } catch (err) {
+            toast.show(err.message, 'error');
+          }
+        });
         tbody.appendChild(row);
       });
     }
@@ -615,8 +776,8 @@ document.getElementById('createTokenBtn')?.addEventListener('click', async () =>
   const expiresAt = document.getElementById('tokenExpires').value || null;
 
   try {
-    await api.post('/api/admin/tokens', { type, expires_at: expiresAt });
-    toast.show('Токен создан');
+    const data = await api.post('/api/admin/tokens', { type, expires_at: expiresAt });
+    toast.show(`Токен создан: ${data.token}`);
     document.getElementById('tokenExpires').value = '';
     loadTokens();
   } catch (err) {
@@ -624,7 +785,7 @@ document.getElementById('createTokenBtn')?.addEventListener('click', async () =>
   }
 });
 
-window.toggleToken = async function(id, isActive) {
+async function toggleToken(id, isActive) {
   try {
     await api.put(`/api/admin/tokens/${id}`, { is_active: isActive });
     toast.show(isActive ? 'Токен активирован' : 'Токен деактивирован');
@@ -632,9 +793,9 @@ window.toggleToken = async function(id, isActive) {
   } catch (err) {
     toast.show(err.message, 'error');
   }
-};
+}
 
-window.deleteToken = async function(id) {
+async function deleteToken(id) {
   if (!await showConfirm('Удалить этот токен? Пользователь потеряет доступ')) return;
   try {
     await api.delete(`/api/admin/tokens/${id}`);
@@ -643,10 +804,9 @@ window.deleteToken = async function(id) {
   } catch (err) {
     toast.show(err.message, 'error');
   }
-};
+}
 
 // === DUPLICATES ===
-
 const findDuplicatesBtn = document.getElementById('findDuplicatesBtn');
 const duplicatesResults = document.getElementById('duplicatesResults');
 const duplicatesProgress = document.getElementById('duplicatesProgress');
@@ -659,16 +819,10 @@ findDuplicatesBtn?.addEventListener('click', async () => {
   duplicatesProgress.style.display = 'block';
   duplicatesProgressFill.style.width = '0%';
   duplicatesResults.innerHTML = '';
-
-  let progress = 0;
-  const progressInterval = setInterval(() => {
-    progress = Math.min(progress + 5, 70);
-    duplicatesProgressFill.style.width = progress + '%';
-  }, 1000);
+  duplicatesStatus.textContent = 'Вычисление хешей и поиск групп...';
 
   try {
     const data = await api.post('/api/admin/find-duplicates');
-    clearInterval(progressInterval);
     duplicatesProgressFill.style.width = '100%';
 
     if (!data.groups || data.groups.length === 0) {
@@ -700,13 +854,13 @@ findDuplicatesBtn?.addEventListener('click', async () => {
       data.groups.forEach((group, gi) => {
         const groupEl = document.createElement('div');
         groupEl.className = 'dup-group';
-        groupEl.innerHTML = `<div class="dup-group-label">Группа ${gi + 1} (${group.length} шт.)</div><div class="dup-group-items"></div>`;
+        groupEl.innerHTML = `<div class="dup-group-label">Группа ${gi + 1} (${group.items.length} шт.)</div><div class="dup-group-items"></div>`;
         const itemsContainer = groupEl.querySelector('.dup-group-items');
         group.items.forEach(item => {
           const card = document.createElement('div');
           card.className = 'dup-card';
           card.innerHTML = `
-            <img src="${item.thumbnail_url}" class="dup-thumb" loading="lazy">
+            <img src="${item.thumbnail_url}" class="dup-thumb" loading="lazy" alt="">
             <div class="dup-info">
               <span class="dup-id">#${item.id}</span>
               <span class="dup-type">${item.type === 'photo' ? '🖼️' : '🎥'}</span>
@@ -716,24 +870,7 @@ findDuplicatesBtn?.addEventListener('click', async () => {
               <input type="checkbox" class="dup-checkbox" value="${item.id}">
             </label>
           `;
-          card.querySelector('.dup-thumb').addEventListener('click', () => {
-            const previewModal = document.createElement('div');
-            previewModal.className = 'modal active';
-            previewModal.innerHTML = `
-              <div class="modal-overlay"></div>
-              <div class="modal-media-full">
-                ${item.type === 'video'
-                  ? `<video src="${item.url}" controls autoplay style="width:100%;height:100%;object-fit:contain"></video>`
-                  : `<img src="${item.url}" style="width:100%;height:100%;object-fit:contain">`}
-              </div>
-              <button class="modal-close" style="z-index:10">
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-              </button>`;
-            document.body.appendChild(previewModal);
-            document.body.style.overflow = 'hidden';
-            previewModal.querySelector('.modal-overlay').addEventListener('click', () => { previewModal.remove(); document.body.style.overflow = ''; });
-            previewModal.querySelector('.modal-close').addEventListener('click', () => { previewModal.remove(); document.body.style.overflow = ''; });
-          });
+          card.querySelector('.dup-thumb').addEventListener('click', () => openPreview(item));
           itemsContainer.appendChild(card);
         });
         groupsContainer.appendChild(groupEl);
@@ -747,11 +884,11 @@ findDuplicatesBtn?.addEventListener('click', async () => {
       document.getElementById('deleteDupSelected')?.addEventListener('click', deleteDupSelected);
     }
   } catch (err) {
-    clearInterval(progressInterval);
     duplicatesResults.innerHTML = `<div class="upload-card"><div class="status-error">Ошибка: ${err.message}</div></div>`;
   } finally {
     findDuplicatesBtn.disabled = false;
     findDuplicatesBtn.innerHTML = '<i data-lucide="search" style="width:16px;height:16px"></i> Найти дубликаты';
+    duplicatesStatus.textContent = '';
     setTimeout(() => {
       duplicatesProgress.style.display = 'none';
       duplicatesProgressFill.style.width = '0%';
@@ -791,16 +928,13 @@ async function deleteDupSelected() {
 }
 
 // === BACKUP / RESTORE ===
-
 document.getElementById('backupBtn')?.addEventListener('click', async () => {
   const btn = document.getElementById('backupBtn');
   btn.disabled = true;
   btn.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px"></div> Скачивание...';
 
   try {
-    const response = await fetch('/api/admin/backup', {
-      headers: { 'Authorization': `Bearer ${auth.getToken()}` },
-    });
+    const response = await fetch('/api/admin/backup', { credentials: 'same-origin' });
     if (!response.ok) throw new Error('Ошибка скачивания бэкапа');
 
     const blob = await response.blob();
@@ -822,7 +956,6 @@ document.getElementById('backupBtn')?.addEventListener('click', async () => {
   }
 });
 
-// Restore file drop zone
 const restoreDropZone = document.getElementById('restoreDropZone');
 const restoreFile = document.getElementById('restoreFile');
 const restoreBtn = document.getElementById('restoreBtn');
@@ -844,8 +977,7 @@ if (restoreDropZone && restoreFile) {
     e.preventDefault();
     restoreDropZone.classList.remove('dragover');
     restoreFile.files = e.dataTransfer.files;
-    const event = new Event('change', { bubbles: true });
-    restoreFile.dispatchEvent(event);
+    restoreFile.dispatchEvent(new Event('change', { bubbles: true }));
   });
 
   restoreFile.addEventListener('change', () => {
@@ -878,7 +1010,7 @@ restoreBtn?.addEventListener('click', async () => {
   try {
     const response = await fetch('/api/admin/restore', {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${auth.getToken()}` },
+      credentials: 'same-origin',
       body: formData,
     });
 

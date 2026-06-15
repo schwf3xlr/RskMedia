@@ -6,9 +6,9 @@
       <h1 class="login-logo">RskMedia</h1>
       <p class="login-subtitle">Введите ваш токен для входа</p>
       <form class="login-form" id="loginForm">
-        <div style="position:relative">
-          <i data-lucide="key" style="position:absolute;left:14px;top:50%;transform:translateY(-50%);width:18px;height:18px;color:var(--text-muted);pointer-events:none"></i>
-          <input type="text" class="login-input" id="tokenInput" placeholder="Ваш токен (client_... или admin_...)" required style="padding-left:42px">
+        <div class="login-input-wrapper">
+          <i data-lucide="key" class="login-input-icon"></i>
+          <input type="password" class="login-input" id="tokenInput" placeholder="Ваш токен (client_... или admin_...)" required autocomplete="current-password">
         </div>
         <button type="submit" class="login-btn">
           <i data-lucide="arrow-right" style="width:18px;height:18px"></i>

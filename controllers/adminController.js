@@ -1,16 +1,22 @@
 const crypto = require('crypto');
 const sharp = require('sharp');
+const fs = require('fs').promises;
 const UserModel = require('../models/user');
 const MediaModel = require('../models/media');
 const { getSignedUrlForKey, getObjectBuffer } = require('../config/s3');
 const db = require('../config/database');
 
 const BACKUP_TABLES = ['categories', 'subcategories', 'tokens', 'media', 'favorites'];
+const SIGN_URL_EXPIRES = parseInt(process.env.SIGN_URL_EXPIRES, 10) || 3600;
 
 const AdminController = {
   async getTokens(req, res) {
     const tokens = await UserModel.getAllTokens();
-    res.json(tokens);
+    const sanitized = tokens.map(t => ({
+      ...t,
+      jwt_hash: undefined,
+    }));
+    res.json(sanitized);
   },
 
   async createToken(req, res) {
@@ -24,14 +30,15 @@ const AdminController = {
     const expiresAt = expires_at || null;
 
     const newToken = await UserModel.createToken(token, type, expiresAt);
-    res.status(201).json(newToken);
+    res.status(201).json({ ...newToken, token });
   },
 
   async updateToken(req, res) {
     const { id } = req.params;
-    const { is_active } = req.body;
+    const { is_active, expires_at } = req.body;
     const updates = {};
     if (is_active !== undefined) updates.is_active = is_active;
+    if (expires_at !== undefined) updates.expires_at = expires_at || null;
 
     const token = await UserModel.updateToken(id, updates);
     res.json(token);
@@ -39,7 +46,11 @@ const AdminController = {
 
   async deleteToken(req, res) {
     const { id } = req.params;
-    await UserModel.deleteToken(id);
+    const tokenId = parseInt(id, 10);
+    if (tokenId === req.user.token_id) {
+      return res.status(403).json({ error: 'Нельзя удалить текущий токен' });
+    }
+    await UserModel.deleteToken(tokenId);
     res.json({ message: 'Токен удалён' });
   },
 
@@ -62,8 +73,8 @@ const AdminController = {
     const mediaWithUrls = await Promise.all(
       media.map(async (m) => ({
         ...m,
-        url: await getSignedUrlForKey(m.s3_key),
-        thumbnail_url: await getSignedUrlForKey(m.thumbnail_s3_key),
+        url: await getSignedUrlForKey(m.s3_key, SIGN_URL_EXPIRES),
+        thumbnail_url: await getSignedUrlForKey(m.thumbnail_s3_key, SIGN_URL_EXPIRES),
       }))
     );
 
@@ -71,16 +82,19 @@ const AdminController = {
   },
 
   async backup(req, res) {
-    const data = {};
-    for (const table of BACKUP_TABLES) {
-      const result = await db.query(`SELECT * FROM ${table} ORDER BY id`);
-      data[table] = result.rows;
-    }
-
     const filename = `rskmedia_backup_${Date.now()}.json`;
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.json(data);
+    res.write('{');
+
+    for (let i = 0; i < BACKUP_TABLES.length; i++) {
+      const table = BACKUP_TABLES[i];
+      const result = await db.query(`SELECT * FROM ${table} ORDER BY id`);
+      res.write(`${i === 0 ? '' : ','}"${table}":${JSON.stringify(result.rows)}`);
+    }
+
+    res.write('}');
+    res.end();
   },
 
   async restore(req, res) {
@@ -88,11 +102,16 @@ const AdminController = {
       return res.status(400).json({ error: 'Файл не загружен' });
     }
 
+    const filePath = req.file.path;
     let data;
     try {
-      data = JSON.parse(req.file.buffer.toString('utf-8'));
+      const content = await fs.readFile(filePath, 'utf-8');
+      data = JSON.parse(content);
     } catch {
+      await cleanup(filePath);
       return res.status(400).json({ error: 'Неверный формат файла. Ожидается JSON' });
+    } finally {
+      await cleanup(filePath);
     }
 
     for (const table of BACKUP_TABLES) {
@@ -103,7 +122,6 @@ const AdminController = {
 
     const client = await db.pool.connect();
     try {
-      // Get existing columns for each table from the database
       const tableColumns = {};
       for (const table of BACKUP_TABLES) {
         const colResult = await client.query(
@@ -114,7 +132,6 @@ const AdminController = {
       }
 
       await client.query('BEGIN');
-
       await client.query('TRUNCATE TABLE favorites, media, subcategories, categories, tokens CASCADE');
 
       const insertOrder = ['categories', 'tokens', 'subcategories', 'media', 'favorites'];
@@ -128,17 +145,15 @@ const AdminController = {
 
         const colNames = columns.join(', ');
         const placeholders = columns.map((_, i) => `$${i + 1}`).join(', ');
+        const insertQuery = `INSERT INTO ${table} (${colNames}) VALUES (${placeholders})`;
 
         for (const row of rows) {
           const values = columns.map(c => row[c]);
-          await client.query(
-            `INSERT INTO ${table} (${colNames}) VALUES (${placeholders})`,
-            values
-          );
+          await client.query(insertQuery, values);
         }
 
         await client.query(
-          `SELECT setval('${table}_id_seq', COALESCE((SELECT MAX(id) FROM ${table}), 1))`
+          `SELECT setval(pg_get_serial_sequence('${table}', 'id'), COALESCE((SELECT MAX(id) FROM ${table}), 1))`
         );
       }
 
@@ -152,6 +167,7 @@ const AdminController = {
       client.release();
     }
   },
+
   async findDuplicates(req, res) {
     try {
       await db.query(`
@@ -219,21 +235,30 @@ const AdminController = {
               id: item.id,
               type: item.type,
               age_rating: item.age_rating,
-              url: await getSignedUrlForKey(item.s3_key),
-              thumbnail_url: await getSignedUrlForKey(item.thumbnail_s3_key),
+              url: await getSignedUrlForKey(item.s3_key, SIGN_URL_EXPIRES),
+              thumbnail_url: await getSignedUrlForKey(item.thumbnail_s3_key, SIGN_URL_EXPIRES),
             }))
           );
           return { items };
         })
       );
 
-      res.json({ groups: result, totalDuplicates: result.reduce((s, g) => s + g.length, 0) });
+      const totalDuplicates = result.reduce((s, g) => s + g.items.length, 0);
+      res.json({ groups: result, totalDuplicates });
     } catch (err) {
       console.error('findDuplicates error:', err);
       res.status(500).json({ error: 'Ошибка поиска дубликатов' });
     }
   },
 };
+
+async function cleanup(filePath) {
+  try {
+    await fs.unlink(filePath);
+  } catch {
+    // ignore
+  }
+}
 
 async function computeDHash(buffer) {
   const { data, info } = await sharp(buffer)

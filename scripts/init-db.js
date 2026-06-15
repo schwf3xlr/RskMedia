@@ -4,7 +4,9 @@ const { v4: uuidv4 } = require('uuid');
 const initSQL = `
 CREATE TABLE IF NOT EXISTS tokens (
     id SERIAL PRIMARY KEY,
-    token VARCHAR(255) UNIQUE NOT NULL,
+    token VARCHAR(255) UNIQUE,
+    token_hash VARCHAR(255),
+    jwt_hash VARCHAR(255),
     type VARCHAR(10) CHECK (type IN ('client', 'admin')) NOT NULL,
     created_at TIMESTAMP DEFAULT NOW(),
     expires_at TIMESTAMP,
@@ -44,40 +46,44 @@ CREATE TABLE IF NOT EXISTS favorites (
     added_at TIMESTAMP DEFAULT NOW(),
     UNIQUE(token_id, media_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_media_uploaded_at ON media(uploaded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_media_category_id ON media(category_id);
+CREATE INDEX IF NOT EXISTS idx_media_subcategory_id ON media(subcategory_id);
+CREATE INDEX IF NOT EXISTS idx_media_age_rating ON media(age_rating);
+CREATE INDEX IF NOT EXISTS idx_media_type ON media(type);
+CREATE INDEX IF NOT EXISTS idx_media_phash ON media(phash) WHERE phash IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_favorites_token_id ON favorites(token_id);
+CREATE INDEX IF NOT EXISTS idx_favorites_media_id ON favorites(media_id);
+CREATE INDEX IF NOT EXISTS idx_subcategories_category_id ON subcategories(category_id);
+CREATE INDEX IF NOT EXISTS idx_tokens_type ON tokens(type);
+CREATE INDEX IF NOT EXISTS idx_tokens_active ON tokens(is_active);
 `;
 
 async function seedCategories() {
-  const categories = ['Twinks', 'Nefors', 'Guys', 'Other'];
-  const subcategories = ['Члены', 'Тела', 'Лица', 'Ебка', 'Отсос', 'Дрочка'];
+  const categories = ['Twinks', 'Guys', 'Other'];
 
   for (const catName of categories) {
-    const catResult = await db.query(
-      'INSERT INTO categories (name) VALUES ($1) ON CONFLICT (name) DO NOTHING RETURNING id',
+    await db.query(
+      'INSERT INTO categories (name) VALUES ($1) ON CONFLICT (name) DO NOTHING',
       [catName]
     );
-    let catId = catResult.rows[0]?.id;
-    if (!catId) {
-      const existing = await db.query('SELECT id FROM categories WHERE name = $1', [catName]);
-      catId = existing.rows[0].id;
-    }
-
-    for (const subName of subcategories) {
-      await db.query(
-        'INSERT INTO subcategories (category_id, name) VALUES ($1, $2) ON CONFLICT (category_id, name) DO NOTHING',
-        [catId, subName]
-      );
-    }
   }
-  console.log('Categories and subcategories seeded');
+  console.log('Categories seeded');
+}
+
+async function migrate() {
+  await db.query('ALTER TABLE media ADD COLUMN IF NOT EXISTS phash NUMERIC(20,0)');
+  await db.query('ALTER TABLE tokens ADD COLUMN IF NOT EXISTS token_hash VARCHAR(255)');
+  await db.query('ALTER TABLE tokens ADD COLUMN IF NOT EXISTS jwt_hash VARCHAR(255)');
 }
 
 async function initDatabase() {
   try {
     await db.query(initSQL);
     console.log('Database tables initialized successfully');
-
-    // Migrations for existing tables
-    await db.query('ALTER TABLE media ADD COLUMN IF NOT EXISTS phash NUMERIC(20,0)');
+    await migrate();
+    console.log('Migrations applied');
 
     const tokenResult = await db.query('SELECT COUNT(*) FROM tokens');
     const tokenCount = parseInt(tokenResult.rows[0].count, 10);
