@@ -304,7 +304,7 @@ async function loadMediaCards(page = 1, append = false) {
 
     if (!data.media || data.media.length === 0 && !append) {
       grid.innerHTML = `
-        <div class="empty-state" class="grid-full">
+        <div class="empty-state grid-full">
           <div class="empty-state-icon"><i data-lucide="image" class="icon-lg"></i></div>
           <div class="empty-state-title">Нет медиа</div>
           <div class="empty-state-text">Загрузите файлы во вкладке "Загрузка"</div>
