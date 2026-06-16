@@ -750,6 +750,25 @@
   border-color: var(--border-hover);
 }
 
+.stats-table-card .table-container {
+  background: var(--bg-2);
+}
+
+.stats-table-card .admin-table th {
+  background: transparent;
+  color: var(--text-muted);
+  font-weight: 500;
+  font-size: 11px;
+}
+
+.stats-table-card .admin-table td {
+  color: var(--text-secondary);
+}
+
+.stats-table-card .admin-table tbody tr:hover {
+  background: rgba(255,255,255,0.03);
+}
+
 .stats-table-wide {
   grid-column: 1 / -1;
 }
