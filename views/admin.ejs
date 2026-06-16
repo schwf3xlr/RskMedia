@@ -37,6 +37,10 @@
       <i data-lucide="copy" class="icon-md"></i>
       Дубликаты
     </button>
+    <button class="admin-tab" data-tab="stats">
+      <i data-lucide="bar-chart" class="icon-md"></i>
+      Статистика
+    </button>
   </div>
 
   <div class="admin-panel active" id="uploadPanel">
@@ -297,6 +301,22 @@
       <div id="duplicatesStatus" class="mt-2"></div>
     </div>
     <div id="duplicatesResults"></div>
+  </div>
+
+  <div class="admin-panel" id="statsPanel">
+    <div class="upload-card">
+      <div class="upload-card-title flex-between">
+        <span>
+          <i data-lucide="bar-chart" class="icon-md"></i>
+          Статистика
+        </span>
+        <button class="btn btn-secondary btn-sm" id="refreshStatsBtn">
+          <i data-lucide="refresh-cw" class="icon-sm"></i>
+          Обновить
+        </button>
+      </div>
+      <div id="statsContainer"></div>
+    </div>
   </div>
 </div>
 

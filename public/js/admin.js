@@ -31,6 +31,7 @@ tabs.forEach(tab => {
     }
     if (target === 'tokens') loadTokens();
     if (target === 'categories') loadCategoriesPanel();
+    if (target === 'stats') loadStats();
   });
 });
 
@@ -970,6 +971,172 @@ async function deleteDupSelected() {
     toast.show(err.message, 'error');
   }
 }
+
+// === STATISTICS ===
+async function loadStats() {
+  const container = document.getElementById('statsContainer');
+  if (!container) return;
+  container.innerHTML = '<div class="skeleton-grid">' + Array(6).fill('<div class="skeleton-card"><div class="skeleton-thumb"></div><div class="skeleton-controls"><div class="skeleton-line"></div><div class="skeleton-line short"></div></div></div>').join('') + '</div>';
+
+  try {
+    const data = await api.get('/api/admin/stats');
+    renderStats(container, data);
+  } catch (err) {
+    container.innerHTML = `<div class="status-error">Ошибка загрузки статистики: ${err.message}</div>`;
+  }
+}
+
+function formatBytes(bytes) {
+  if (!bytes || bytes === 0) return '0 Б';
+  const sizes = ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return Math.round(bytes / Math.pow(1024, i) * 10) / 10 + ' ' + sizes[i];
+}
+
+function renderStats(container, data) {
+  const totalCount = data.typeStats.reduce((s, t) => s + parseInt(t.count, 10), 0);
+  const totalSize = data.typeStats.reduce((s, t) => s + parseInt(t.total_size || 0, 10), 0);
+
+  const typeRows = data.typeStats.map(t => {
+    const percent = totalCount ? Math.round((t.count / totalCount) * 100) : 0;
+    return `
+      <tr>
+        <td>${t.type === 'photo' ? 'Фото' : 'Видео'}</td>
+        <td>${t.count}</td>
+        <td>${percent}%</td>
+        <td>${formatBytes(t.avg_size)}</td>
+        <td>${formatBytes(t.total_size)}</td>
+      </tr>
+    `;
+  }).join('');
+
+  const ageRows = data.ageStats.map(a => `
+    <tr>
+      <td>${a.age === 'Не указан' ? 'Не указан' : a.age + (parseInt(a.age, 10) >= 19 ? '+' : '')}</td>
+      <td>${a.count}</td>
+    </tr>
+  `).join('');
+
+  const categoryRows = data.categoryStats.map(c => `
+    <tr>
+      <td>${c.category || 'Без категории'}</td>
+      <td>${c.subcategory}</td>
+      <td>${c.count}</td>
+    </tr>
+  `).join('');
+
+  const missing = data.missingMetadata;
+  const processing = data.missingProcessing;
+  const recent = data.recentUploads;
+
+  container.innerHTML = `
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-card-value">${totalCount}</div>
+        <div class="stat-card-label">Всего файлов</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card-value">${formatBytes(totalSize)}</div>
+        <div class="stat-card-label">Общий объём</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card-value">${recent.last_24h}</div>
+        <div class="stat-card-label">За 24 часа</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card-value">${recent.last_7d}</div>
+        <div class="stat-card-label">За 7 дней</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card-value">${recent.last_30d}</div>
+        <div class="stat-card-label">За 30 дней</div>
+      </div>
+    </div>
+
+    <div class="stats-tables-grid">
+      <div class="stats-table-card">
+        <div class="stats-table-title">Фото / Видео</div>
+        <table class="stats-table">
+          <thead><tr><th>Тип</th><th>Кол-во</th><th>Доля</th><th>Средний размер</th><th>Общий размер</th></tr></thead>
+          <tbody>${typeRows}</tbody>
+        </table>
+      </div>
+
+      <div class="stats-table-card">
+        <div class="stats-table-title">Возрастной рейтинг</div>
+        <table class="stats-table">
+          <thead><tr><th>Возраст</th><th>Кол-во</th></tr></thead>
+          <tbody>${ageRows}</tbody>
+        </table>
+      </div>
+
+      <div class="stats-table-card stats-table-wide">
+        <div class="stats-table-title">Категории / Подкатегории</div>
+        <table class="stats-table">
+          <thead><tr><th>Категория</th><th>Подкатегория</th><th>Кол-во</th></tr></thead>
+          <tbody>${categoryRows}</tbody>
+        </table>
+      </div>
+
+      <div class="stats-table-card">
+        <div class="stats-table-title">Проблемные файлы</div>
+        <table class="stats-table">
+          <thead><tr><th>Проблема</th><th>Кол-во</th><th></th></tr></thead>
+          <tbody>
+            <tr>
+              <td>Без категории</td>
+              <td>${missing.missing_category}</td>
+              <td><button class="btn btn-sm btn-primary" data-missing-filter="category_id">Исправить</button></td>
+            </tr>
+            <tr>
+              <td>Без подкатегории</td>
+              <td>${missing.missing_subcategory}</td>
+              <td><button class="btn btn-sm btn-primary" data-missing-filter="subcategory_id">Исправить</button></td>
+            </tr>
+            <tr>
+              <td>Без возраста</td>
+              <td>${missing.missing_age}</td>
+              <td><button class="btn btn-sm btn-primary" data-missing-filter="age_rating">Исправить</button></td>
+            </tr>
+            <tr>
+              <td>Без миниатюры</td>
+              <td>${processing.missing_thumbnail}</td>
+              <td></td>
+            </tr>
+            <tr>
+              <td>Без display-версии</td>
+              <td>${processing.missing_display}</td>
+              <td></td>
+            </tr>
+            <tr>
+              <td>Без phash</td>
+              <td>${processing.missing_phash}</td>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  container.querySelectorAll('[data-missing-filter]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const field = btn.dataset.missingFilter;
+      document.querySelectorAll('.admin-missing-filter').forEach(cb => cb.checked = false);
+      const target = document.querySelector(`.admin-missing-filter[data-field="${field}"]`);
+      if (target) {
+        target.checked = true;
+        target.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      const batchTab = document.querySelector('.admin-tab[data-tab="batch"]');
+      if (batchTab) batchTab.click();
+    });
+  });
+
+  lucide.createIcons();
+}
+
+document.getElementById('refreshStatsBtn')?.addEventListener('click', loadStats);
 
 // === BACKUP / RESTORE ===
 document.getElementById('backupBtn')?.addEventListener('click', async () => {

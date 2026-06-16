@@ -34,6 +34,7 @@ router.put('/tokens/:id', [
 ], AdminController.updateToken);
 router.delete('/tokens/:id', AdminController.deleteToken);
 router.get('/media', AdminController.getMedia);
+router.get('/stats', AdminController.getStats);
 router.get('/backup', AdminController.backup);
 router.post('/restore', upload.single('file'), AdminController.restore);
 router.post('/find-duplicates', AdminController.findDuplicates);

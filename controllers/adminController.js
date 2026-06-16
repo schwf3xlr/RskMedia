@@ -262,6 +262,83 @@ const AdminController = {
     }
   },
 
+  async getStats(req, res) {
+    try {
+      // Total and average by type
+      const typeStats = await db.query(`
+        SELECT
+          type,
+          COUNT(*) as count,
+          ROUND(AVG(file_size)) as avg_size,
+          SUM(file_size) as total_size
+        FROM media
+        GROUP BY type
+      `);
+
+      // Age rating distribution
+      const ageStats = await db.query(`
+        SELECT
+          COALESCE(age_rating::text, 'Не указан') as age,
+          COUNT(*) as count
+        FROM media
+        GROUP BY age_rating
+        ORDER BY age_rating NULLS FIRST
+      `);
+
+      // Category / subcategory distribution
+      const categoryStats = await db.query(`
+        SELECT
+          c.name as category,
+          COALESCE(s.name, 'Без подкатегории') as subcategory,
+          COUNT(m.id) as count
+        FROM media m
+        LEFT JOIN categories c ON m.category_id = c.id
+        LEFT JOIN subcategories s ON m.subcategory_id = s.id
+        GROUP BY c.name, s.name
+        ORDER BY c.name, s.name
+      `);
+
+      // Missing metadata
+      const missingMetadata = await db.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE category_id IS NULL) as missing_category,
+          COUNT(*) FILTER (WHERE subcategory_id IS NULL) as missing_subcategory,
+          COUNT(*) FILTER (WHERE age_rating IS NULL) as missing_age
+        FROM media
+      `);
+
+      // Missing processing
+      const missingProcessing = await db.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE thumbnail_s3_key IS NULL OR thumbnail_s3_key = '') as missing_thumbnail,
+          COUNT(*) FILTER (WHERE display_s3_key IS NULL OR display_s3_key = '') as missing_display,
+          COUNT(*) FILTER (WHERE phash IS NULL) as missing_phash
+        FROM media
+      `);
+
+      // Recent uploads
+      const recentUploads = await db.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE uploaded_at >= NOW() - INTERVAL '24 hours') as last_24h,
+          COUNT(*) FILTER (WHERE uploaded_at >= NOW() - INTERVAL '7 days') as last_7d,
+          COUNT(*) FILTER (WHERE uploaded_at >= NOW() - INTERVAL '30 days') as last_30d
+        FROM media
+      `);
+
+      res.json({
+        typeStats: typeStats.rows,
+        ageStats: ageStats.rows,
+        categoryStats: categoryStats.rows,
+        missingMetadata: missingMetadata.rows[0],
+        missingProcessing: missingProcessing.rows[0],
+        recentUploads: recentUploads.rows[0],
+      });
+    } catch (err) {
+      console.error('Stats error:', err);
+      res.status(500).json({ error: 'Failed to load statistics' });
+    }
+  },
+
   async findDuplicates(req, res) {
     try {
       await db.query(`

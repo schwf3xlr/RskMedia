@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS media (
     s3_key VARCHAR(500) NOT NULL,
     thumbnail_s3_key VARCHAR(500) NOT NULL,
     display_s3_key VARCHAR(500),
+    file_size BIGINT,
     category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
     subcategory_id INTEGER REFERENCES subcategories(id) ON DELETE SET NULL,
     age_rating INTEGER CHECK (age_rating >= 0 AND age_rating <= 21),
@@ -80,6 +81,7 @@ async function seedCategories() {
 async function migrate() {
   await db.query('ALTER TABLE media ADD COLUMN IF NOT EXISTS phash NUMERIC(20,0)');
   await db.query('ALTER TABLE media ADD COLUMN IF NOT EXISTS display_s3_key VARCHAR(500)');
+  await db.query('ALTER TABLE media ADD COLUMN IF NOT EXISTS file_size BIGINT');
   await db.query('ALTER TABLE tokens ADD COLUMN IF NOT EXISTS token_hash VARCHAR(255)');
   await db.query('ALTER TABLE tokens ADD COLUMN IF NOT EXISTS jwt_hash VARCHAR(255)');
 
