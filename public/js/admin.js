@@ -1056,65 +1056,73 @@ function renderStats(container, data) {
     <div class="stats-tables-grid">
       <div class="stats-table-card">
         <div class="stats-table-title">Фото / Видео</div>
-        <table class="stats-table">
-          <thead><tr><th>Тип</th><th>Кол-во</th><th>Доля</th><th>Средний размер</th><th>Общий размер</th></tr></thead>
-          <tbody>${typeRows}</tbody>
-        </table>
+        <div class="table-container">
+          <table class="admin-table">
+            <thead><tr><th>Тип</th><th>Кол-во</th><th>Доля</th><th>Средний размер</th><th>Общий размер</th></tr></thead>
+            <tbody>${typeRows}</tbody>
+          </table>
+        </div>
       </div>
 
       <div class="stats-table-card">
         <div class="stats-table-title">Возрастной рейтинг</div>
-        <table class="stats-table">
-          <thead><tr><th>Возраст</th><th>Кол-во</th></tr></thead>
-          <tbody>${ageRows}</tbody>
-        </table>
+        <div class="table-container">
+          <table class="admin-table">
+            <thead><tr><th>Возраст</th><th>Кол-во</th></tr></thead>
+            <tbody>${ageRows}</tbody>
+          </table>
+        </div>
       </div>
 
       <div class="stats-table-card stats-table-wide">
         <div class="stats-table-title">Категории / Подкатегории</div>
-        <table class="stats-table">
-          <thead><tr><th>Категория</th><th>Подкатегория</th><th>Кол-во</th></tr></thead>
-          <tbody>${categoryRows}</tbody>
-        </table>
+        <div class="table-container">
+          <table class="admin-table">
+            <thead><tr><th>Категория</th><th>Подкатегория</th><th>Кол-во</th></tr></thead>
+            <tbody>${categoryRows}</tbody>
+          </table>
+        </div>
       </div>
 
       <div class="stats-table-card">
         <div class="stats-table-title">Проблемные файлы</div>
-        <table class="stats-table">
-          <thead><tr><th>Проблема</th><th>Кол-во</th><th></th></tr></thead>
-          <tbody>
-            <tr>
-              <td>Без категории</td>
-              <td>${missing.missing_category}</td>
-              <td><button class="btn btn-sm btn-primary" data-missing-filter="category_id">Исправить</button></td>
-            </tr>
-            <tr>
-              <td>Без подкатегории</td>
-              <td>${missing.missing_subcategory}</td>
-              <td><button class="btn btn-sm btn-primary" data-missing-filter="subcategory_id">Исправить</button></td>
-            </tr>
-            <tr>
-              <td>Без возраста</td>
-              <td>${missing.missing_age}</td>
-              <td><button class="btn btn-sm btn-primary" data-missing-filter="age_rating">Исправить</button></td>
-            </tr>
-            <tr>
-              <td>Без миниатюры</td>
-              <td>${processing.missing_thumbnail}</td>
-              <td></td>
-            </tr>
-            <tr>
-              <td>Без display-версии</td>
-              <td>${processing.missing_display}</td>
-              <td></td>
-            </tr>
-            <tr>
-              <td>Без phash</td>
-              <td>${processing.missing_phash}</td>
-              <td></td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="table-container">
+          <table class="admin-table">
+            <thead><tr><th>Проблема</th><th>Кол-во</th><th></th></tr></thead>
+            <tbody>
+              <tr>
+                <td>Без категории</td>
+                <td>${missing.missing_category}</td>
+                <td><button class="btn btn-sm btn-primary" data-missing-filter="category_id">Исправить</button></td>
+              </tr>
+              <tr>
+                <td>Без подкатегории</td>
+                <td>${missing.missing_subcategory}</td>
+                <td><button class="btn btn-sm btn-primary" data-missing-filter="subcategory_id">Исправить</button></td>
+              </tr>
+              <tr>
+                <td>Без возраста</td>
+                <td>${missing.missing_age}</td>
+                <td><button class="btn btn-sm btn-primary" data-missing-filter="age_rating">Исправить</button></td>
+              </tr>
+              <tr>
+                <td>Без миниатюры</td>
+                <td>${processing.missing_thumbnail}</td>
+                <td></td>
+              </tr>
+              <tr>
+                <td>Без display-версии</td>
+                <td>${processing.missing_display}</td>
+                <td></td>
+              </tr>
+              <tr>
+                <td>Без phash</td>
+                <td>${processing.missing_phash}</td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   `;
