@@ -84,7 +84,8 @@
 
 .login-input {
   width: 100%;
-  padding: 14px 18px 14px 42px;
+  height: var(--control-height);
+  padding: 0 18px 0 42px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-2);
@@ -111,7 +112,8 @@
 
 .login-btn {
   width: 100%;
-  padding: 14px;
+  height: var(--control-height);
+  padding: 0;
   border: none;
   border-radius: var(--radius-md);
   background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
@@ -561,11 +563,12 @@
 .category-form .category-input {
   flex: 1;
   min-width: 180px;
-  padding: 10px 16px;
   width: auto;
 }
 
 .category-form .category-input {
+  height: var(--control-height);
+  padding: 0 16px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-2);
@@ -615,7 +618,8 @@
 
 .token-form .token-input {
   width: 200px;
-  padding: 10px 16px;
+  height: var(--control-height);
+  padding: 0 16px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-2);

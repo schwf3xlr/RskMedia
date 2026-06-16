@@ -1,6 +1,7 @@
 /* === BUTTONS === */
 .btn {
-  padding: 10px 20px;
+  height: var(--control-height);
+  padding: 0 20px;
   border: none;
   border-radius: var(--radius-md);
   font-size: 14px;
@@ -65,7 +66,8 @@
 }
 
 .btn-sm {
-  padding: 6px 14px;
+  height: 32px;
+  padding: 0 14px;
   font-size: 13px;
   border-radius: var(--radius-sm);
 }
@@ -961,7 +963,8 @@
 }
 
 .token-expires-input {
-  padding: 6px 10px;
+  height: 32px;
+  padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-3);
