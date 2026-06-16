@@ -32,17 +32,6 @@ function csrfProtection(req, res, next) {
   const cookieToken = req.signedCookies?.[CSRF_COOKIE_NAME] || req.cookies?.[CSRF_COOKIE_NAME];
   const headerToken = req.headers[CSRF_HEADER_NAME] || req.headers[CSRF_HEADER_NAME.replace(/-/g, '_')] || req.body?._csrf;
 
-  console.log('CSRF debug:', {
-    method: req.method,
-    path: req.path,
-    hasCookie: !!req.headers.cookie,
-    cookieTokenPresent: !!cookieToken,
-    headerTokenPresent: !!headerToken,
-    cookieTokenLen: cookieToken ? cookieToken.length : 0,
-    headerTokenLen: headerToken ? headerToken.length : 0,
-    match: cookieToken === headerToken,
-  });
-
   if (!cookieToken || !headerToken || cookieToken !== headerToken) {
     return res.status(403).json({ error: 'Invalid or missing CSRF token' });
   }
