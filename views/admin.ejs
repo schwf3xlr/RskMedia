@@ -213,18 +213,21 @@
   </div>
 
   <div class="admin-panel" id="tokensPanel">
-    <div class="table-container">
+    <div class="upload-card">
+      <div class="upload-card-title">Создать токен</div>
       <div class="token-form">
         <select id="tokenType" class="filter-select" required>
           <option value="client">Client</option>
           <option value="admin">Admin</option>
         </select>
-        <input type="date" id="tokenExpires" placeholder="Срок действия (опционально)">
+        <input type="date" id="tokenExpires" class="token-input" placeholder="Срок действия (опционально)">
         <button type="button" class="btn btn-primary" id="createTokenBtn">
           <i data-lucide="plus" class="icon-md"></i>
           Создать токен
         </button>
       </div>
+    </div>
+    <div class="table-container mt-3">
       <div class="table-responsive">
         <table class="admin-table" id="tokensTable">
           <thead>
