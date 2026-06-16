@@ -20,6 +20,17 @@
   </div>
 </div>
 
+<script nonce="<%= nonce %>">
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistrations().then(registrations => {
+      registrations.forEach(reg => reg.unregister());
+    });
+    if ('caches' in window) {
+      caches.keys().then(names => names.forEach(name => caches.delete(name)));
+    }
+  }
+</script>
+
 <script src="/js/login.js" type="module" nonce="<%= nonce %>"></script>
 
 <%- include('partials/footer') %>

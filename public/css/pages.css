@@ -122,6 +122,10 @@
   cursor: pointer;
   transition: var(--transition);
   box-shadow: 0 2px 12px rgba(99, 102, 241, 0.25);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
 }
 
 .login-btn:hover {

@@ -15,11 +15,12 @@ const auth = {
   },
 
   async login(token) {
+    const headers = this.getAuthHeaders();
     const response = await fetch('/api/auth/login', {
       method: 'POST',
-      headers: this.getAuthHeaders(),
-      credentials: 'same-origin',
-      body: JSON.stringify({ token }),
+      headers,
+      credentials: 'include',
+      body: JSON.stringify({ token, _csrf: headers['X-CSRF-Token'] }),
     });
 
     if (!response.ok) {
@@ -34,10 +35,12 @@ const auth = {
 
   async logout() {
     try {
+      const headers = this.getAuthHeaders();
       await fetch('/api/auth/logout', {
         method: 'POST',
-        headers: this.getAuthHeaders(),
-        credentials: 'same-origin',
+        headers,
+        credentials: 'include',
+        body: JSON.stringify({ _csrf: headers['X-CSRF-Token'] }),
       });
     } catch (err) {
       console.error('Logout error:', err);
@@ -54,13 +57,20 @@ const auth = {
 
 const api = {
   async request(url, options = {}) {
+    const headers = auth.getAuthHeaders();
+    const hasBody = options.body && typeof options.body === 'string';
+    const body = hasBody ? JSON.parse(options.body) : {};
+    if (hasBody && headers['X-CSRF-Token']) {
+      body._csrf = headers['X-CSRF-Token'];
+    }
     const response = await fetch(url, {
       ...options,
-      credentials: 'same-origin',
+      credentials: 'include',
       headers: {
-        ...auth.getAuthHeaders(),
+        ...headers,
         ...options.headers,
       },
+      body: hasBody ? JSON.stringify(body) : options.body,
     });
 
     if (response.status === 401 || response.status === 403) {
@@ -78,11 +88,17 @@ const api = {
 
   async requestForm(url, options = {}) {
     const meta = document.querySelector('meta[name="csrf-token"]');
+    const token = meta ? meta.content : '';
+    let body = options.body;
+    if (token && body instanceof FormData && !body.has('_csrf')) {
+      body.append('_csrf', token);
+    }
     const response = await fetch(url, {
       ...options,
-      credentials: 'same-origin',
+      credentials: 'include',
+      body,
       headers: {
-        'X-CSRF-Token': meta ? meta.content : '',
+        'X-CSRF-Token': token,
         ...options.headers,
       },
     });
@@ -102,11 +118,15 @@ const api = {
 
   upload(url, formData, { onProgress, onAbort, signal } = {}) {
     const meta = document.querySelector('meta[name="csrf-token"]');
+    const token = meta ? meta.content : '';
+    if (token && !formData.has('_csrf')) {
+      formData.append('_csrf', token);
+    }
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', url, true);
       xhr.withCredentials = true;
-      if (meta) xhr.setRequestHeader('X-CSRF-Token', meta.content);
+      if (token) xhr.setRequestHeader('X-CSRF-Token', token);
 
       if (signal) {
         signal.addEventListener('abort', () => xhr.abort());
