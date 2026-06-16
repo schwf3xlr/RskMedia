@@ -1,4 +1,4 @@
-const { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 const s3Client = new S3Client({
@@ -108,11 +108,21 @@ async function getObjectBuffer(key) {
   });
 }
 
+async function getObjectSize(key) {
+  const command = new HeadObjectCommand({
+    Bucket: bucket,
+    Key: key,
+  });
+  const response = await s3Client.send(command);
+  return response.ContentLength || 0;
+}
+
 module.exports = {
   s3Client,
   uploadToS3,
   deleteFromS3,
   getSignedUrlForKey,
   getObjectBuffer,
+  getObjectSize,
   bucket,
 };

@@ -995,7 +995,7 @@ function formatBytes(bytes) {
 
 function renderStats(container, data) {
   const totalCount = data.typeStats.reduce((s, t) => s + parseInt(t.count, 10), 0);
-  const totalSize = data.typeStats.reduce((s, t) => s + parseInt(t.total_size || 0, 10), 0);
+  const totalSize = data.typeStats.reduce((s, t) => s + (parseInt(t.total_size, 10) || 0), 0);
 
   const typeRows = data.typeStats.map(t => {
     const percent = totalCount ? Math.round((t.count / totalCount) * 100) : 0;

@@ -270,7 +270,7 @@ const AdminController = {
           type,
           COUNT(*) as count,
           ROUND(AVG(file_size)) as avg_size,
-          SUM(file_size) as total_size
+          COALESCE(SUM(file_size), 0) as total_size
         FROM media
         GROUP BY type
       `);
