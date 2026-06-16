@@ -1,0 +1,16 @@
+<%- include('partials/header', { title: title || 'Ошибка - RskMedia' }) %>
+<%- include('partials/navbar', { activePage: '', user: user }) %>
+
+<div class="page-container">
+  <div class="empty-state error-page">
+    <div class="empty-state-icon"><i data-lucide="alert-triangle" class="icon-xl"></i></div>
+    <div class="empty-state-title"><%= title || 'Ошибка' %></div>
+    <div class="empty-state-text"><%= message || 'Что-то пошло не так' %></div>
+    <a href="/" class="btn btn-primary mt-3">
+      <i data-lucide="home" class="icon-md"></i>
+      На главную
+    </a>
+  </div>
+</div>
+
+<%- include('partials/footer') %>

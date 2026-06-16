@@ -16,10 +16,6 @@ const AuthController = {
       return res.status(401).json({ error: 'Токен не найден. Проверьте правильность введённого токена' });
     }
 
-    if (user.expires_at && new Date(user.expires_at) < new Date()) {
-      return res.status(401).json({ error: 'Срок действия токена истёк. Запросите новый токен у администратора' });
-    }
-
     const tokenPayload = {
       token_id: user.id,
       type: user.type,

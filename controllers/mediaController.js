@@ -6,9 +6,9 @@ const { v4: uuidv4 } = require('uuid');
 const MediaModel = require('../models/media');
 const { uploadToS3, deleteFromS3, getSignedUrlForKey } = require('../config/s3');
 const { validateFileType } = require('../helpers/fileValidator');
+const { getExtensionFromMimeType } = require('../helpers/mime');
+const { SIGN_URL_EXPIRES } = require('../config/constants');
 const db = require('../config/database');
-
-const SIGN_URL_EXPIRES = parseInt(process.env.SIGN_URL_EXPIRES, 10) || 3600;
 
 async function enrichMediaUrls(media) {
   const mediaWithUrls = await Promise.all(
@@ -87,27 +87,41 @@ const MediaController = {
     const file = req.file;
     if (!file) return res.status(400).json({ error: 'No file uploaded' });
 
+    const MAX_PHOTO_SIZE = (parseInt(process.env.MAX_PHOTO_SIZE_MB, 10) || 50) * 1024 * 1024;
+    const MAX_VIDEO_SIZE = (parseInt(process.env.MAX_VIDEO_SIZE_MB, 10) || 500) * 1024 * 1024;
+
     const tempPaths = [];
     try {
       const buffer = await fs.readFile(file.path);
+      const isImage = file.mimetype.startsWith('image/');
+      const maxSize = isImage ? MAX_PHOTO_SIZE : MAX_VIDEO_SIZE;
+      if (buffer.length > maxSize) {
+        return res.status(400).json({ error: `Файл слишком большой. Максимум ${maxSize / 1024 / 1024} МБ` });
+      }
       if (!validateFileType(buffer, file.mimetype)) {
         return res.status(400).json({ error: 'Содержимое файла не соответствует его типу' });
       }
 
       const { category_id, subcategory_id, age_rating } = req.body;
-      const type = file.mimetype.startsWith('image/') ? 'photo' : 'video';
-      const ext = path.extname(file.originalname);
+      const type = isImage ? 'photo' : 'video';
+      const ext = getExtensionFromMimeType(file.mimetype);
       const mediaId = uuidv4();
       const s3Key = `media/${mediaId}${ext}`;
       const thumbnailKey = `thumbnails/${mediaId}_thumb.jpg`;
+      const displayKey = isImage ? `display/${mediaId}_display.jpg` : null;
 
       await uploadToS3(s3Key, buffer, file.mimetype);
 
       let thumbnailBuffer;
+      let displayBuffer = null;
       if (type === 'photo') {
         thumbnailBuffer = await sharp(buffer)
           .resize(400, null, { withoutEnlargement: true })
           .jpeg({ quality: 80 })
+          .toBuffer();
+        displayBuffer = await sharp(buffer)
+          .resize(1920, 1920, { fit: 'inside', withoutEnlargement: true })
+          .jpeg({ quality: 85 })
           .toBuffer();
       } else {
         const tempPath = path.join(__dirname, '../uploads', `${mediaId}_temp${ext}`);
@@ -117,11 +131,15 @@ const MediaController = {
       }
 
       await uploadToS3(thumbnailKey, thumbnailBuffer, 'image/jpeg');
+      if (displayBuffer && displayKey) {
+        await uploadToS3(displayKey, displayBuffer, 'image/jpeg');
+      }
 
       const media = await MediaModel.create({
         type,
         s3Key,
         thumbnailS3Key: thumbnailKey,
+        displayS3Key: displayKey,
         categoryId: category_id || null,
         subcategoryId: subcategory_id || null,
         ageRating: age_rating || null,
@@ -129,6 +147,7 @@ const MediaController = {
 
       media.url = await getSignedUrlForKey(media.s3_key, SIGN_URL_EXPIRES);
       media.thumbnail_url = await getSignedUrlForKey(media.thumbnail_s3_key, SIGN_URL_EXPIRES);
+      media.display_url = displayKey ? await getSignedUrlForKey(media.display_s3_key, SIGN_URL_EXPIRES) : null;
 
       res.status(201).json(media);
     } catch (err) {
@@ -189,11 +208,10 @@ const MediaController = {
 
     await db.transaction(async (client) => {
       for (const id of ids) {
-        const itemUpdates = {
-          categoryId: category_id !== undefined ? category_id : null,
-          subcategoryId: subcategory_id !== undefined ? subcategory_id : null,
-          ageRating: age_rating !== undefined ? age_rating : null,
-        };
+        const itemUpdates = {};
+        if (category_id !== undefined) itemUpdates.categoryId = category_id;
+        if (subcategory_id !== undefined) itemUpdates.subcategoryId = subcategory_id;
+        if (age_rating !== undefined) itemUpdates.ageRating = age_rating;
 
         if (category_id !== undefined && subcategory_id === undefined) {
           const mediaResult = await client.query(
@@ -213,14 +231,22 @@ const MediaController = {
             }
           }
         }
+
+        if (Object.keys(itemUpdates).length === 0) continue;
+
+        const fields = [];
+        const values = [];
+        let idx = 1;
+        for (const [key, value] of Object.entries(itemUpdates)) {
+          const dbField = key.replace(/([A-Z])/g, '_$1').toLowerCase();
+          fields.push(`${dbField} = $${idx}`);
+          values.push(value);
+          idx++;
+        }
+        values.push(id);
         await client.query(
-          'UPDATE media SET category_id = $1, subcategory_id = $2, age_rating = $3 WHERE id = $4',
-          [
-            itemUpdates.categoryId,
-            itemUpdates.subcategoryId,
-            itemUpdates.ageRating,
-            id,
-          ]
+          `UPDATE media SET ${fields.join(', ')} WHERE id = $${idx}`,
+          values
         );
       }
     });
@@ -268,21 +294,34 @@ const MediaController = {
 };
 
 async function processFile(buffer, file, { category_id, subcategory_id, age_rating }) {
-  const type = file.mimetype.startsWith('image/') ? 'photo' : 'video';
-  const ext = path.extname(file.originalname);
+  const MAX_PHOTO_SIZE = (parseInt(process.env.MAX_PHOTO_SIZE_MB, 10) || 50) * 1024 * 1024;
+  const MAX_VIDEO_SIZE = (parseInt(process.env.MAX_VIDEO_SIZE_MB, 10) || 500) * 1024 * 1024;
+  const isImage = file.mimetype.startsWith('image/');
+  const maxSize = isImage ? MAX_PHOTO_SIZE : MAX_VIDEO_SIZE;
+  if (buffer.length > maxSize) {
+    throw new Error(`Файл слишком большой. Максимум ${maxSize / 1024 / 1024} МБ`);
+  }
+  const type = isImage ? 'photo' : 'video';
+  const ext = getExtensionFromMimeType(file.mimetype);
   const mediaId = uuidv4();
   const s3Key = `media/${mediaId}${ext}`;
   const thumbnailKey = `thumbnails/${mediaId}_thumb.jpg`;
+  const displayKey = isImage ? `display/${mediaId}_display.jpg` : null;
   const tempPaths = [];
 
   try {
     await uploadToS3(s3Key, buffer, file.mimetype);
 
     let thumbnailBuffer;
+    let displayBuffer = null;
     if (type === 'photo') {
       thumbnailBuffer = await sharp(buffer)
         .resize(400, null, { withoutEnlargement: true })
         .jpeg({ quality: 80 })
+        .toBuffer();
+      displayBuffer = await sharp(buffer)
+        .resize(1920, 1920, { fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 85 })
         .toBuffer();
     } else {
       const tempPath = path.join(__dirname, '../uploads', `${mediaId}_temp${ext}`);
@@ -292,11 +331,15 @@ async function processFile(buffer, file, { category_id, subcategory_id, age_rati
     }
 
     await uploadToS3(thumbnailKey, thumbnailBuffer, 'image/jpeg');
+    if (displayBuffer && displayKey) {
+      await uploadToS3(displayKey, displayBuffer, 'image/jpeg');
+    }
 
     const media = await MediaModel.create({
       type,
       s3Key,
       thumbnailS3Key: thumbnailKey,
+      displayS3Key: displayKey,
       categoryId: category_id || null,
       subcategoryId: subcategory_id || null,
       ageRating: age_rating || null,
@@ -304,6 +347,7 @@ async function processFile(buffer, file, { category_id, subcategory_id, age_rati
 
     media.url = await getSignedUrlForKey(media.s3_key, SIGN_URL_EXPIRES);
     media.thumbnail_url = await getSignedUrlForKey(media.thumbnail_s3_key, SIGN_URL_EXPIRES);
+    media.display_url = displayKey ? await getSignedUrlForKey(media.display_s3_key, SIGN_URL_EXPIRES) : null;
 
     return media;
   } finally {
@@ -321,7 +365,19 @@ async function cleanupTempFiles(paths) {
   }
 }
 
-function generateVideoThumbnail(videoPath) {
+function validateVideoFile(videoPath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(videoPath, (err) => {
+      if (err) {
+        return reject(new Error('Файл повреждён или имеет неподдерживаемый видеоформат'));
+      }
+      resolve();
+    });
+  });
+}
+
+async function generateVideoThumbnail(videoPath) {
+  await validateVideoFile(videoPath);
   return new Promise((resolve, reject) => {
     const thumbPath = videoPath + '_thumb.jpg';
     ffmpeg(videoPath)

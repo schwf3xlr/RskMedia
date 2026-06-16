@@ -4,19 +4,18 @@ const fs = require('fs').promises;
 const UserModel = require('../models/user');
 const MediaModel = require('../models/media');
 const { getSignedUrlForKey, getObjectBuffer } = require('../config/s3');
+const { SIGN_URL_EXPIRES } = require('../config/constants');
 const db = require('../config/database');
 
 const BACKUP_TABLES = ['categories', 'subcategories', 'tokens', 'media', 'favorites'];
-const SIGN_URL_EXPIRES = parseInt(process.env.SIGN_URL_EXPIRES, 10) || 3600;
+const BACKUP_SENSITIVE_COLUMNS = {
+  tokens: ['jwt_hash'],
+};
 
 const AdminController = {
   async getTokens(req, res) {
     const tokens = await UserModel.getAllTokens();
-    const sanitized = tokens.map(t => ({
-      ...t,
-      jwt_hash: undefined,
-    }));
-    res.json(sanitized);
+    res.json(tokens);
   },
 
   async createToken(req, res) {
@@ -35,6 +34,11 @@ const AdminController = {
 
   async updateToken(req, res) {
     const { id } = req.params;
+    const tokenId = parseInt(id, 10);
+    if (tokenId === req.user.token_id) {
+      return res.status(403).json({ error: 'Нельзя изменить текущий токен' });
+    }
+
     const { is_active, expires_at } = req.body;
     const updates = {};
     if (is_active !== undefined) updates.is_active = is_active;
@@ -89,7 +93,13 @@ const AdminController = {
 
     for (let i = 0; i < BACKUP_TABLES.length; i++) {
       const table = BACKUP_TABLES[i];
-      const result = await db.query(`SELECT * FROM ${table} ORDER BY id`);
+      const sensitive = BACKUP_SENSITIVE_COLUMNS[table] || [];
+      const columns = (await db.query(
+        `SELECT column_name FROM information_schema.columns WHERE table_name = $1`,
+        [table]
+      )).rows.map(r => r.column_name).filter(c => !sensitive.includes(c));
+      const colList = columns.length > 0 ? columns.join(', ') : '*';
+      const result = await db.query(`SELECT ${colList} FROM ${table} ORDER BY id`);
       res.write(`${i === 0 ? '' : ','}"${table}":${JSON.stringify(result.rows)}`);
     }
 
@@ -114,12 +124,6 @@ const AdminController = {
       await cleanup(filePath);
     }
 
-    for (const table of BACKUP_TABLES) {
-      if (!Array.isArray(data[table])) {
-        return res.status(400).json({ error: `Отсутствуют данные для таблицы ${table}` });
-      }
-    }
-
     const client = await db.pool.connect();
     try {
       const tableColumns = {};
@@ -131,6 +135,88 @@ const AdminController = {
         tableColumns[table] = colResult.rows.map(r => r.column_name);
       }
 
+      // Validate top-level structure
+      for (const table of BACKUP_TABLES) {
+        if (!Array.isArray(data[table])) {
+          return res.status(400).json({ error: `Отсутствуют данные для таблицы ${table}` });
+        }
+      }
+      const unknownTables = Object.keys(data).filter(t => !BACKUP_TABLES.includes(t));
+      if (unknownTables.length > 0) {
+        return res.status(400).json({ error: `Неизвестные таблицы в бэкапе: ${unknownTables.join(', ')}` });
+      }
+
+      // Validate each row
+      const validators = {
+        categories: {
+          required: ['name'],
+          allowed: ['id', 'name', 'created_at'],
+          types: { id: 'int', name: 'string', created_at: 'datetime' },
+        },
+        subcategories: {
+          required: ['category_id', 'name'],
+          allowed: ['id', 'category_id', 'name', 'created_at'],
+          types: { id: 'int', category_id: 'int', name: 'string', created_at: 'datetime' },
+        },
+        tokens: {
+          required: ['token_hash', 'type'],
+          allowed: ['id', 'token_hash', 'type', 'created_at', 'expires_at', 'is_active'],
+          types: { id: 'int', token_hash: 'string', type: 'enum:client,admin', created_at: 'datetime', expires_at: 'datetime', is_active: 'bool' },
+        },
+        media: {
+          required: ['type', 's3_key', 'thumbnail_s3_key'],
+          allowed: ['id', 'type', 's3_key', 'thumbnail_s3_key', 'display_s3_key', 'category_id', 'subcategory_id', 'age_rating', 'phash', 'uploaded_at'],
+          types: { id: 'int', type: 'enum:photo,video', s3_key: 'string', thumbnail_s3_key: 'string', display_s3_key: 'string', category_id: 'int', subcategory_id: 'int', age_rating: 'int', phash: 'string', uploaded_at: 'datetime' },
+        },
+        favorites: {
+          required: ['token_id', 'media_id'],
+          allowed: ['id', 'token_id', 'media_id', 'added_at'],
+          types: { id: 'int', token_id: 'int', media_id: 'int', added_at: 'datetime' },
+        },
+      };
+
+      const validateValue = (value, type) => {
+        if (value === null || value === undefined) return true;
+        if (type.startsWith('enum:')) {
+          const allowed = type.split(':')[1].split(',');
+          return allowed.includes(value);
+        }
+        switch (type) {
+          case 'int': return Number.isInteger(Number(value)) && !isNaN(value);
+          case 'string': return typeof value === 'string';
+          case 'bool': return typeof value === 'boolean';
+          case 'datetime': return !isNaN(Date.parse(value));
+          default: return true;
+        }
+      };
+
+      for (const table of BACKUP_TABLES) {
+        const rules = validators[table];
+        const existingColumns = tableColumns[table];
+        for (let i = 0; i < data[table].length; i++) {
+          const row = data[table][i];
+          if (row === null || typeof row !== 'object') {
+            return res.status(400).json({ error: `Строка ${i} в таблице ${table} не является объектом` });
+          }
+          const rowColumns = Object.keys(row);
+          const unexpected = rowColumns.filter(c => !rules.allowed.includes(c) || !existingColumns.includes(c));
+          if (unexpected.length > 0) {
+            return res.status(400).json({ error: `Таблица ${table}, строка ${i}: неизвестные колонки ${unexpected.join(', ')}` });
+          }
+          for (const reqField of rules.required) {
+            if (row[reqField] === undefined || row[reqField] === null || row[reqField] === '') {
+              return res.status(400).json({ error: `Таблица ${table}, строка ${i}: отсутствует обязательное поле ${reqField}` });
+            }
+          }
+          for (const [col, value] of Object.entries(row)) {
+            const type = rules.types[col];
+            if (type && !validateValue(value, type)) {
+              return res.status(400).json({ error: `Таблица ${table}, строка ${i}: неверное значение для ${col}` });
+            }
+          }
+        }
+      }
+
       await client.query('BEGIN');
       await client.query('TRUNCATE TABLE favorites, media, subcategories, categories, tokens CASCADE');
 
@@ -140,7 +226,8 @@ const AdminController = {
         if (rows.length === 0) continue;
 
         const existingColumns = tableColumns[table];
-        const columns = Object.keys(rows[0]).filter(c => existingColumns.includes(c));
+        const rules = validators[table];
+        const columns = Object.keys(rows[0]).filter(c => rules.allowed.includes(c) && existingColumns.includes(c));
         if (columns.length === 0) continue;
 
         const colNames = columns.join(', ');
@@ -152,15 +239,22 @@ const AdminController = {
           await client.query(insertQuery, values);
         }
 
-        await client.query(
-          `SELECT setval(pg_get_serial_sequence('${table}', 'id'), COALESCE((SELECT MAX(id) FROM ${table}), 1))`
+        const seqName = await client.query(
+          `SELECT pg_get_serial_sequence($1, 'id') AS seq`,
+          [table]
         );
+        if (seqName.rows[0]?.seq) {
+          await client.query(
+            `SELECT setval($1, COALESCE((SELECT MAX(id) FROM ${table}), 1))`,
+            [seqName.rows[0].seq]
+          );
+        }
       }
 
       await client.query('COMMIT');
       res.json({ message: 'База данных успешно восстановлена' });
     } catch (err) {
-      await client.query('ROLLBACK');
+      await client.query('ROLLBACK').catch(() => {});
       console.error('Restore error:', err);
       res.status(500).json({ error: 'Ошибка восстановления базы данных' });
     } finally {
@@ -208,30 +302,50 @@ const AdminController = {
         'SELECT id, type, s3_key, thumbnail_s3_key, age_rating, phash::TEXT AS phash_str FROM media WHERE phash IS NOT NULL ORDER BY uploaded_at DESC'
       );
 
-      const groups = [];
       const threshold = 10;
+      const itemHashes = allHashed.rows.map(item => ({
+        ...item,
+        hash: BigInt(item.phash_str),
+      }));
 
-      for (const item of allHashed.rows) {
-        const hash = BigInt(item.phash_str);
-        let added = false;
-        for (const group of groups) {
-          if (hammingDistance(hash, group.rep) < threshold) {
-            group.items.push(item);
-            added = true;
-            break;
-          }
-        }
-        if (!added) {
-          groups.push({ rep: hash, items: [item] });
+      // Locality-sensitive hashing: group by 16-bit segments to reduce comparisons
+      const buckets = new Map();
+      for (const item of itemHashes) {
+        for (let shift = 0; shift < 4; shift++) {
+          const segment = Number((item.hash >> BigInt(shift * 16)) & 0xFFFFn);
+          const key = `${shift}:${segment}`;
+          if (!buckets.has(key)) buckets.set(key, []);
+          buckets.get(key).push(item);
         }
       }
 
-      const duplicateGroups = groups.filter(g => g.items.length > 1);
+      const visited = new Set();
+      const groups = [];
+      for (const bucketItems of buckets.values()) {
+        if (bucketItems.length < 2) continue;
+        for (let i = 0; i < bucketItems.length; i++) {
+          const item = bucketItems[i];
+          if (visited.has(item.id)) continue;
+          const group = [item];
+          visited.add(item.id);
+          for (let j = i + 1; j < bucketItems.length; j++) {
+            const candidate = bucketItems[j];
+            if (visited.has(candidate.id)) continue;
+            if (hammingDistance(item.hash, candidate.hash) <= threshold) {
+              group.push(candidate);
+              visited.add(candidate.id);
+            }
+          }
+          if (group.length > 1) {
+            groups.push(group);
+          }
+        }
+      }
 
       const result = await Promise.all(
-        duplicateGroups.map(async (group) => {
+        groups.map(async (group) => {
           const items = await Promise.all(
-            group.items.map(async (item) => ({
+            group.map(async (item) => ({
               id: item.id,
               type: item.type,
               age_rating: item.age_rating,

@@ -1,11 +1,13 @@
 const db = require('../config/database');
+const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
+
+const HASH_ROUNDS = 12;
 
 const initSQL = `
 CREATE TABLE IF NOT EXISTS tokens (
     id SERIAL PRIMARY KEY,
-    token VARCHAR(255) UNIQUE,
-    token_hash VARCHAR(255),
+    token_hash VARCHAR(255) UNIQUE NOT NULL,
     jwt_hash VARCHAR(255),
     type VARCHAR(10) CHECK (type IN ('client', 'admin')) NOT NULL,
     created_at TIMESTAMP DEFAULT NOW(),
@@ -32,6 +34,7 @@ CREATE TABLE IF NOT EXISTS media (
     type VARCHAR(5) CHECK (type IN ('photo', 'video')) NOT NULL,
     s3_key VARCHAR(500) NOT NULL,
     thumbnail_s3_key VARCHAR(500) NOT NULL,
+    display_s3_key VARCHAR(500),
     category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
     subcategory_id INTEGER REFERENCES subcategories(id) ON DELETE SET NULL,
     age_rating INTEGER CHECK (age_rating >= 0 AND age_rating <= 21),
@@ -53,8 +56,10 @@ CREATE INDEX IF NOT EXISTS idx_media_subcategory_id ON media(subcategory_id);
 CREATE INDEX IF NOT EXISTS idx_media_age_rating ON media(age_rating);
 CREATE INDEX IF NOT EXISTS idx_media_type ON media(type);
 CREATE INDEX IF NOT EXISTS idx_media_phash ON media(phash) WHERE phash IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_media_category_age ON media(category_id, age_rating, uploaded_at DESC);
 CREATE INDEX IF NOT EXISTS idx_favorites_token_id ON favorites(token_id);
 CREATE INDEX IF NOT EXISTS idx_favorites_media_id ON favorites(media_id);
+CREATE INDEX IF NOT EXISTS idx_favorites_token_media ON favorites(token_id, media_id);
 CREATE INDEX IF NOT EXISTS idx_subcategories_category_id ON subcategories(category_id);
 CREATE INDEX IF NOT EXISTS idx_tokens_type ON tokens(type);
 CREATE INDEX IF NOT EXISTS idx_tokens_active ON tokens(is_active);
@@ -74,8 +79,25 @@ async function seedCategories() {
 
 async function migrate() {
   await db.query('ALTER TABLE media ADD COLUMN IF NOT EXISTS phash NUMERIC(20,0)');
+  await db.query('ALTER TABLE media ADD COLUMN IF NOT EXISTS display_s3_key VARCHAR(500)');
   await db.query('ALTER TABLE tokens ADD COLUMN IF NOT EXISTS token_hash VARCHAR(255)');
   await db.query('ALTER TABLE tokens ADD COLUMN IF NOT EXISTS jwt_hash VARCHAR(255)');
+
+  // Migrate existing plaintext tokens to bcrypt hashes before dropping the column
+  const tokenColExists = await db.query(
+    `SELECT 1 FROM information_schema.columns WHERE table_name = 'tokens' AND column_name = 'token'`
+  );
+  if (tokenColExists.rows.length > 0) {
+    const plainTokens = await db.query(
+      `SELECT id, token FROM tokens WHERE token IS NOT NULL AND token_hash IS NULL`
+    );
+    for (const row of plainTokens.rows) {
+      const hash = await bcrypt.hash(row.token, HASH_ROUNDS);
+      await db.query('UPDATE tokens SET token_hash = $1 WHERE id = $2', [hash, row.id]);
+      console.log(`Migrated token id=${row.id} to token_hash`);
+    }
+    await db.query('ALTER TABLE tokens DROP COLUMN IF EXISTS token');
+  }
 }
 
 async function initDatabase() {
@@ -90,9 +112,10 @@ async function initDatabase() {
 
     if (tokenCount === 0) {
       const defaultToken = 'admin_' + uuidv4().replace(/-/g, '').substring(0, 16);
+      const tokenHash = await bcrypt.hash(defaultToken, HASH_ROUNDS);
       await db.query(
-        'INSERT INTO tokens (token, type, is_active) VALUES ($1, $2, true)',
-        [defaultToken, 'admin']
+        'INSERT INTO tokens (token_hash, type, is_active) VALUES ($1, $2, true)',
+        [tokenHash, 'admin']
       );
       console.log('='.repeat(60));
       console.log('No tokens found. Default admin token created:');

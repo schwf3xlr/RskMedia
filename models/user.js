@@ -1,25 +1,37 @@
 const db = require('../config/database');
+const bcrypt = require('bcryptjs');
+
+const HASH_ROUNDS = 12;
 
 const UserModel = {
-  async findByToken(token) {
+  async findByToken(tokenPlain) {
     const result = await db.query(
-      'SELECT * FROM tokens WHERE token = $1 AND is_active = true',
-      [token]
+      `SELECT id, token_hash, type, expires_at, is_active, created_at, jwt_hash
+       FROM tokens
+       WHERE is_active = true AND (expires_at IS NULL OR expires_at > NOW())`
     );
-    return result.rows[0] || null;
+    for (const row of result.rows) {
+      if (await bcrypt.compare(tokenPlain, row.token_hash)) {
+        return row;
+      }
+    }
+    return null;
   },
 
-  async createToken(token, type, expiresAt) {
+  async createToken(tokenPlain, type, expiresAt) {
+    const tokenHash = await bcrypt.hash(tokenPlain, HASH_ROUNDS);
     const result = await db.query(
-      'INSERT INTO tokens (token, type, expires_at) VALUES ($1, $2, $3) RETURNING id, token, type, expires_at, is_active, created_at',
-      [token, type, expiresAt]
+      `INSERT INTO tokens (token_hash, type, expires_at) VALUES ($1, $2, $3)
+       RETURNING id, type, created_at, expires_at, is_active`,
+      [tokenHash, type, expiresAt || null]
     );
     return result.rows[0];
   },
 
   async getAllTokens() {
     const result = await db.query(
-      'SELECT id, token, type, created_at, expires_at, is_active, jwt_hash FROM tokens ORDER BY created_at DESC'
+      `SELECT id, type, created_at, expires_at, is_active, jwt_hash
+       FROM tokens ORDER BY created_at DESC`
     );
     return result.rows;
   },
@@ -30,18 +42,15 @@ const UserModel = {
     let idx = 1;
 
     for (const [key, value] of Object.entries(updates)) {
-      if (key === 'expires_at') {
-        fields.push(`${key} = $${idx}`);
-      } else {
-        fields.push(`${key} = $${idx}`);
-      }
+      fields.push(`${key} = $${idx}`);
       values.push(value);
       idx++;
     }
     values.push(id);
 
     const result = await db.query(
-      `UPDATE tokens SET ${fields.join(', ')} WHERE id = $${idx} RETURNING id, token, type, created_at, expires_at, is_active`,
+      `UPDATE tokens SET ${fields.join(', ')} WHERE id = $${idx}
+       RETURNING id, type, created_at, expires_at, is_active`,
       values
     );
     return result.rows[0];

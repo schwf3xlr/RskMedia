@@ -1,4 +1,4 @@
-<% const ages = [13, 14, 15, 16, 17, 18, 19]; %>
+
 
 <div class="page-container">
   <div class="filters">
@@ -11,7 +11,7 @@
       </select>
       <select class="filter-select" id="ageFilter">
         <option value="">Все возраста</option>
-        <% for(let i of ages) { %>
+        <% for(let i of AGE_RATINGS) { %>
         <option value="<%= i %>"><%= i >= 19 ? i + '+' : i %></option>
         <% } %>
       </select>
@@ -25,22 +25,22 @@
         <option value="age_asc">По возрасту ↑</option>
       </select>
       <button class="btn btn-primary" id="applyFilters">
-        <i data-lucide="filter" style="width:16px;height:16px"></i>
+        <i data-lucide="filter" class="icon-md"></i>
         Применить
       </button>
       <button class="btn btn-secondary" id="clearFilters">
-        <i data-lucide="x" style="width:16px;height:16px"></i>
+        <i data-lucide="x" class="icon-md"></i>
         Сбросить
       </button>
     </div>
   </div>
 
   <div class="media-grid" id="mediaGrid" role="list" aria-label="Медиа галерея"></div>
-  <div class="loading-spinner" id="loadingSpinner" style="display:none;">
+  <div class="loading-spinner hidden" id="loadingSpinner">
     <div class="spinner"></div>
   </div>
-  <div class="empty-state" id="emptyState" style="display:none;">
-    <div class="empty-state-icon">🖼️</div>
+  <div class="empty-state hidden" id="emptyState">
+    <div class="empty-state-icon"><i data-lucide="image" class="icon-lg"></i></div>
     <div class="empty-state-title" id="emptyTitle">Галерея пуста</div>
     <div class="empty-state-text" id="emptyText">Загрузите медиа через админ-панель</div>
   </div>
@@ -69,4 +69,4 @@
   </div>
 </div>
 
-<script src="/js/player.js" type="module"></script>
+<script src="/js/player.js" type="module" nonce="<%= nonce %>"></script>

@@ -136,8 +136,8 @@ const gallery = {
     this.loading = true;
     const spinner = document.getElementById('loadingSpinner');
     const emptyState = document.getElementById('emptyState');
-    if (spinner) spinner.style.display = 'flex';
-    if (emptyState) emptyState.style.display = 'none';
+    if (spinner) spinner.classList.remove('hidden');
+    if (emptyState) emptyState.classList.add('hidden');
 
     try {
       const endpoint = this.isFavorites ? '/api/favorites' : '/api/media';
@@ -154,7 +154,7 @@ const gallery = {
         this.hasMore = false;
         if (this.page === 1 && this.media.length === 0) {
           if (emptyState) {
-            emptyState.style.display = 'flex';
+            emptyState.classList.remove('hidden');
             const title = document.getElementById('emptyTitle');
             const text = document.getElementById('emptyText');
             if (this.isFavorites) {
@@ -177,7 +177,7 @@ const gallery = {
       toast.show('Ошибка загрузки', 'error');
     } finally {
       this.loading = false;
-      if (spinner) spinner.style.display = 'none';
+      if (spinner) spinner.classList.add('hidden');
     }
   },
 
@@ -218,11 +218,11 @@ const gallery = {
 
     const isVideo = item.type === 'video';
     const mediaEl = document.createElement('img');
-    // Use original URL for photos; thumbnail for videos to avoid loading full video
-    mediaEl.src = isVideo ? (item.thumbnail_url || item.url) : item.url;
+    // Use display URL for photos; thumbnail for videos to avoid loading full video
+    mediaEl.src = isVideo ? (item.thumbnail_url || item.url) : (item.display_url || item.url);
     mediaEl.loading = 'lazy';
     mediaEl.decoding = 'async';
-    mediaEl.alt = '';
+    mediaEl.alt = `${item.type} ${item.age_rating !== null ? item.age_rating + ' лет' : ''}`;
     card.appendChild(mediaEl);
 
     const overlay = document.createElement('div');
@@ -385,17 +385,17 @@ const gallery = {
 
     const isVideo = item.type === 'video';
     const mediaEl = document.createElement(isVideo ? 'video' : 'img');
-    mediaEl.src = item.url;
+    const displaySrc = isVideo ? item.url : (item.display_url || item.url);
+    mediaEl.src = displaySrc;
     mediaEl.dataset.fullSrc = item.url;
+    mediaEl.dataset.displaySrc = item.display_url || item.url;
     mediaEl.controls = isVideo;
-    mediaEl.style.width = '100%';
-    mediaEl.style.height = '100%';
-    mediaEl.style.objectFit = 'contain';
+    mediaEl.className = 'modal-media';
     mediaEl.setAttribute('aria-label', isVideo ? 'Видео' : 'Изображение');
+    mediaEl.alt = isVideo ? 'Видео' : `Изображение, возраст ${item.age_rating !== null ? item.age_rating + ' лет' : 'не указан'}`;
 
     if (isVideo) {
       mediaEl.autoplay = true;
-      mediaEl.src = item.url;
     } else {
       const zoom = {
         el: mediaEl,

@@ -1,0 +1,52 @@
+const crypto = require('crypto');
+
+const CSRF_COOKIE_NAME = 'csrf_token';
+const CSRF_HEADER_NAME = 'x-csrf-token';
+
+function generateToken() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+function getCsrfToken(req, res) {
+  let token = req.signedCookies?.[CSRF_COOKIE_NAME];
+  if (!token) {
+    token = generateToken();
+    res.cookie(CSRF_COOKIE_NAME, token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      path: '/',
+      signed: true,
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+  }
+  return token;
+}
+
+function csrfProtection(req, res, next) {
+  // Safe methods do not require CSRF token
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    return next();
+  }
+
+  const cookieToken = req.signedCookies?.[CSRF_COOKIE_NAME];
+  const headerToken = req.headers[CSRF_HEADER_NAME] || req.headers[CSRF_HEADER_NAME.replace(/-/g, '_')] || req.body?._csrf;
+
+  if (!cookieToken || !headerToken || cookieToken !== headerToken) {
+    return res.status(403).json({ error: 'Invalid or missing CSRF token' });
+  }
+
+  next();
+}
+
+function csrfTokenMiddleware(req, res, next) {
+  res.locals.csrfToken = getCsrfToken(req, res);
+  next();
+}
+
+module.exports = {
+  csrfProtection,
+  csrfTokenMiddleware,
+  CSRF_COOKIE_NAME,
+  CSRF_HEADER_NAME,
+};

@@ -9,6 +9,9 @@ const morgan = require('morgan');
 const initDatabase = require('./scripts/init-db');
 const { authenticateToken } = require('./middleware/auth');
 const { requireAdmin } = require('./middleware/admin');
+const { csrfProtection, csrfTokenMiddleware } = require('./middleware/csrf');
+const { nonceMiddleware } = require('./middleware/nonce');
+const { AGE_RATINGS } = require('./config/constants');
 
 dotenv.config();
 
@@ -21,31 +24,43 @@ if (process.env.TRUST_PROXY) {
 }
 
 // Security middleware
-const cspDirectives = {
-  defaultSrc: ["'self'"],
-  scriptSrc: ["'self'", "'unsafe-inline'"],
-  styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-  fontSrc: ["'self'", "https://fonts.gstatic.com"],
-  imgSrc: ["'self'", "data:", "blob:", "https:"],
-  mediaSrc: ["'self'", "https:"],
-  connectSrc: ["'self'"],
-  frameSrc: ["'none'"],
-  objectSrc: ["'none'"],
-  baseUri: ["'self'"],
-  formAction: ["'self'"],
-  upgradeInsecureRequests: [],
-};
-
-if (process.env.NODE_ENV === 'development') {
-  delete cspDirectives.upgradeInsecureRequests;
+function buildCspDirectives(res) {
+  return {
+    defaultSrc: ["'self'"],
+    scriptSrc: ["'self'", `'nonce-${res.locals.nonce}'`],
+    styleSrc: ["'self'", `'nonce-${res.locals.nonce}'`, "https://fonts.googleapis.com"],
+    fontSrc: ["'self'", "https://fonts.gstatic.com"],
+    imgSrc: ["'self'", "data:", "blob:", "https:"],
+    mediaSrc: ["'self'", "https:"],
+    connectSrc: ["'self'"],
+    frameSrc: ["'none'"],
+    objectSrc: ["'none'"],
+    baseUri: ["'self'"],
+    formAction: ["'self'"],
+    upgradeInsecureRequests: [],
+  };
 }
 
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: cspDirectives,
-  },
-  crossOriginEmbedderPolicy: false,
-}));
+app.use(cookieParser(process.env.COOKIE_SECRET || process.env.JWT_SECRET));
+app.use(csrfTokenMiddleware);
+app.use(nonceMiddleware);
+app.use((req, res, next) => {
+  res.locals.AGE_RATINGS = AGE_RATINGS;
+  next();
+});
+
+app.use((req, res, next) => {
+  const cspDirectives = buildCspDirectives(res);
+  if (process.env.NODE_ENV === 'development') {
+    delete cspDirectives.upgradeInsecureRequests;
+  }
+  helmet({
+    contentSecurityPolicy: {
+      directives: cspDirectives,
+    },
+    crossOriginEmbedderPolicy: false,
+  })(req, res, next);
+});
 
 app.use(cors({
   origin: process.env.CORS_ORIGIN || false,
@@ -54,7 +69,6 @@ app.use(cors({
 
 app.use(compression());
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
-app.use(cookieParser(process.env.COOKIE_SECRET || process.env.JWT_SECRET));
 
 // Body parsing
 app.use(express.json({ limit: '10mb' }));
@@ -95,11 +109,11 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
 // API Routes
-app.use('/api/auth', require('./routes/auth'));
-app.use('/api/media', authenticateToken, require('./routes/media'));
-app.use('/api/categories', authenticateToken, require('./routes/categories'));
-app.use('/api/favorites', authenticateToken, require('./routes/favorites'));
-app.use('/api/admin', authenticateToken, requireAdmin, require('./routes/admin'));
+app.use('/api/auth', csrfProtection, require('./routes/auth'));
+app.use('/api/media', authenticateToken, csrfProtection, require('./routes/media'));
+app.use('/api/categories', authenticateToken, csrfProtection, require('./routes/categories'));
+app.use('/api/favorites', authenticateToken, csrfProtection, require('./routes/favorites'));
+app.use('/api/admin', authenticateToken, requireAdmin, csrfProtection, require('./routes/admin'));
 
 // Page routes
 app.get('/login', (req, res) => {
@@ -123,7 +137,7 @@ app.use((req, res) => {
   if (req.path.startsWith('/api/')) {
     return res.status(404).json({ error: 'Endpoint not found' });
   }
-  res.status(404).render('login', { title: 'Страница не найдена', user: null });
+  res.status(404).render('error', { title: 'Страница не найдена', message: 'Запрошенная страница не существует', user: req.user || null });
 });
 
 // Error handling
@@ -136,12 +150,16 @@ app.use((err, req, res, next) => {
     return res.status(status).json({ error: message });
   }
 
-  res.status(status).render('login', { title: 'Ошибка', user: null, error: message });
+  res.status(status).render('error', { title: 'Ошибка', message, user: req.user || null });
 });
 
 async function start() {
   if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
     console.error('JWT_SECRET is not set or too weak. Set a strong JWT_SECRET in .env');
+    process.exit(1);
+  }
+  if (!process.env.COOKIE_SECRET || process.env.COOKIE_SECRET.length < 32) {
+    console.error('COOKIE_SECRET is not set or too weak. Set a strong COOKIE_SECRET in .env');
     process.exit(1);
   }
   try {

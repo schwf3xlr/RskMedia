@@ -12,3 +12,4 @@ Thumbs.db
 docs/
 *.tmp
 *.temp
+deploy.sh

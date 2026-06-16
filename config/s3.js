@@ -45,6 +45,7 @@ class LRUCache {
 }
 
 const urlCache = new LRUCache(CACHE_MAX);
+const inFlight = new Map();
 
 async function uploadToS3(key, buffer, contentType) {
   const command = new PutObjectCommand({
@@ -70,13 +71,26 @@ async function getSignedUrlForKey(key, expiresIn = 3600) {
   const cached = urlCache.get(cacheKey);
   if (cached) return cached;
 
-  const command = new GetObjectCommand({
-    Bucket: bucket,
-    Key: key,
-  });
-  const url = await getSignedUrl(s3Client, command, { expiresIn });
-  urlCache.set(cacheKey, url, CACHE_TTL_MS);
-  return url;
+  if (inFlight.has(cacheKey)) {
+    return inFlight.get(cacheKey);
+  }
+
+  const promise = (async () => {
+    try {
+      const command = new GetObjectCommand({
+        Bucket: bucket,
+        Key: key,
+      });
+      const url = await getSignedUrl(s3Client, command, { expiresIn });
+      urlCache.set(cacheKey, url, CACHE_TTL_MS);
+      return url;
+    } finally {
+      inFlight.delete(cacheKey);
+    }
+  })();
+
+  inFlight.set(cacheKey, promise);
+  return promise;
 }
 
 async function getObjectBuffer(key) {

@@ -36,13 +36,6 @@ const upload = multer({
     if (!allowedTypes.includes(file.mimetype)) {
       return cb(new Error('Invalid file type. Allowed: JPG, PNG, GIF, WEBP, MP4, WEBM, MOV'));
     }
-
-    const isImage = file.mimetype.startsWith('image/');
-    const maxSize = isImage ? MAX_PHOTO_SIZE : MAX_VIDEO_SIZE;
-    if (parseInt(req.headers['content-length'], 10) > maxSize) {
-      return cb(new Error(`File too large. Max ${isImage ? 'photo' : 'video'} size: ${maxSize / 1024 / 1024} MB`));
-    }
-
     cb(null, true);
   },
 });

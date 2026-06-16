@@ -29,7 +29,7 @@ router.post('/tokens', AdminController.createToken);
 router.put('/tokens/:id', [
   param('id').isInt().withMessage('id must be an integer'),
   body('is_active').optional().isBoolean().withMessage('is_active must be boolean'),
-  body('expires_at').optional().isISO8601().withMessage('expires_at must be a date'),
+  body('expires_at').optional({ nullable: true }).isISO8601().withMessage('expires_at must be a date'),
   validate,
 ], AdminController.updateToken);
 router.delete('/tokens/:id', AdminController.deleteToken);

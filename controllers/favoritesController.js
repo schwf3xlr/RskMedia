@@ -1,7 +1,6 @@
 const FavoritesModel = require('../models/favorites');
 const { getSignedUrlForKey } = require('../config/s3');
-
-const SIGN_URL_EXPIRES = parseInt(process.env.SIGN_URL_EXPIRES, 10) || 3600;
+const { SIGN_URL_EXPIRES } = require('../config/constants');
 
 async function enrichFavorites(favorites) {
   return Promise.all(

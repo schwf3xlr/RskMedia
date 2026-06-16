@@ -8,24 +8,26 @@
     </button>
     <div class="navbar-menu" id="navbarMenu">
       <a href="/" class="navbar-link <%= activePage === 'home' ? 'active' : '' %>">
-        <i data-lucide="home" style="width:16px;height:16px"></i>
+        <i data-lucide="home" class="icon-md"></i>
         Главная
       </a>
       <a href="/favorites" class="navbar-link <%= activePage === 'favorites' ? 'active' : '' %>">
-        <i data-lucide="heart" style="width:16px;height:16px"></i>
+        <i data-lucide="heart" class="icon-md"></i>
         Избранное
       </a>
       <% if (user && user.type === 'admin') { %>
       <a href="/admin" class="navbar-link navbar-link-admin <%= activePage === 'admin' ? 'active' : '' %>">
-        <i data-lucide="shield" style="width:16px;height:16px"></i>
+        <i data-lucide="shield" class="icon-md"></i>
         Админ
       </a>
       <% } %>
+      <% if (user) { %>
       <button class="navbar-link navbar-btn" id="logoutBtn">
-        <i data-lucide="log-out" style="width:16px;height:16px"></i>
+        <i data-lucide="log-out" class="icon-md"></i>
         Выход
       </button>
+      <% } %>
     </div>
   </div>
 </nav>
-<script>lucide.createIcons();</script>
+<script src="/js/navbar.js" nonce="<%= nonce %>"></script>

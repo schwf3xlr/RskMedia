@@ -1,14 +1,5 @@
 const db = require('../config/database');
-
-const SORT_MAP = {
-  newest: 'm.uploaded_at DESC',
-  oldest: 'm.uploaded_at ASC',
-  age_desc: 'm.age_rating DESC NULLS LAST, m.uploaded_at DESC',
-  age_asc: 'm.age_rating ASC NULLS LAST, m.uploaded_at DESC',
-  photo_first: "m.type = 'photo' DESC, m.uploaded_at DESC",
-  video_first: "m.type = 'video' DESC, m.uploaded_at DESC",
-  name: 'm.s3_key ASC',
-};
+const { SORT_MAP } = require('../config/constants');
 
 const ALLOWED_FIELDS = ['category_id', 'subcategory_id', 'age_rating'];
 
@@ -101,10 +92,10 @@ const MediaModel = {
     return result.rows[0];
   },
 
-  async create({ type, s3Key, thumbnailS3Key, categoryId, subcategoryId, ageRating }) {
+  async create({ type, s3Key, thumbnailS3Key, displayS3Key, categoryId, subcategoryId, ageRating }) {
     const result = await db.query(
-      'INSERT INTO media (type, s3_key, thumbnail_s3_key, category_id, subcategory_id, age_rating) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-      [type, s3Key, thumbnailS3Key, categoryId, subcategoryId, ageRating]
+      'INSERT INTO media (type, s3_key, thumbnail_s3_key, display_s3_key, category_id, subcategory_id, age_rating) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
+      [type, s3Key, thumbnailS3Key, displayS3Key || null, categoryId, subcategoryId, ageRating]
     );
     return result.rows[0];
   },

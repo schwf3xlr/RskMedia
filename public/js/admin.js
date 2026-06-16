@@ -1,4 +1,5 @@
 import { auth, api, toast, categories } from './main.js';
+import { AGE_RATINGS } from './constants.js';
 
 // Server-side middleware already ensures admin access for /admin route.
 // If this script somehow runs without admin rights, backend calls will fail with 403.
@@ -40,7 +41,7 @@ function resetBatchGrid() {
   state.allSelected = false;
   const selectAllBtn = document.getElementById('selectAllBtn');
   if (selectAllBtn) {
-    selectAllBtn.innerHTML = '<i data-lucide="check-square" style="width:14px;height:14px"></i> Выбрать всё';
+    selectAllBtn.innerHTML = '<i data-lucide="check-square" class="icon-sm"></i> Выбрать всё';
   }
   updateSelectedCount();
 }
@@ -149,36 +150,48 @@ document.getElementById('singleUploadForm')?.addEventListener('submit', async (e
 
   const progressBar = document.getElementById('singleProgress');
   const progressFill = document.getElementById('singleProgressFill');
-  progressBar.style.display = 'block';
+  progressBar.classList.remove('hidden');
   progressFill.style.width = '0%';
 
   try {
-    const response = await fetch('/api/media/upload/single', {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: formData,
+    await api.upload('/api/media/upload/single', formData, {
+      onProgress: (percent) => {
+        progressFill.style.width = `${percent}%`;
+      },
+      signal: singleUploadController.signal,
     });
-
-    if (!response.ok) throw new Error('Upload failed');
 
     progressFill.style.width = '100%';
     toast.show('Файл загружен');
     e.target.reset();
-    const dropZone = document.getElementById('singleDropZone');
-    const text = dropZone.querySelector('.file-drop-zone-text');
-    text.innerHTML = `<i data-lucide="image-plus" style="width:32px;height:32px;color:var(--accent);margin-bottom:8px"></i><br><strong>Перетащите файл</strong> или нажмите для выбора`;
-    lucide.createIcons();
+    resetSingleDropZone();
   } catch (err) {
     toast.show(err.message, 'error');
   } finally {
     setTimeout(() => {
-      progressBar.style.display = 'none';
+      progressBar.classList.add('hidden');
       progressFill.style.width = '0%';
     }, 2000);
   }
 });
 
+function resetSingleDropZone() {
+  const dropZone = document.getElementById('singleDropZone');
+  const text = dropZone.querySelector('.file-drop-zone-text');
+  text.innerHTML = '<i data-lucide="image-plus" class="icon-xl icon-accent mb-2"></i><br><strong>Перетащите файл</strong> или нажмите для выбора';
+  lucide.createIcons();
+}
+
 // Batch upload
+let batchUploadController = null;
+const cancelBatchBtn = document.getElementById('cancelBatchUpload');
+
+cancelBatchBtn?.addEventListener('click', () => {
+  if (batchUploadController) {
+    batchUploadController.abort();
+  }
+});
+
 document.getElementById('batchUploadForm')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const files = document.getElementById('batchFiles').files;
@@ -186,6 +199,8 @@ document.getElementById('batchUploadForm')?.addEventListener('submit', async (e)
 
   const queue = document.getElementById('uploadQueue');
   queue.innerHTML = '';
+  cancelBatchBtn.classList.remove('hidden');
+  batchUploadController = new AbortController();
 
   const categoryId = document.getElementById('batchCategory').value;
   const subcategoryId = document.getElementById('batchSubcategory').value;
@@ -195,9 +210,9 @@ document.getElementById('batchUploadForm')?.addEventListener('submit', async (e)
   const queueItems = fileArray.map(file => {
     const item = document.createElement('div');
     item.className = 'queue-item';
-    const icon = file.type.startsWith('video') ? '🎥' : '🖼️';
+    const icon = file.type.startsWith('video') ? 'video' : 'image';
     item.innerHTML = `
-      <div class="queue-icon">${icon}</div>
+      <div class="queue-icon"><i data-lucide="${icon}" class="icon-md"></i></div>
       <span class="queue-name">${file.name}</span>
       <span class="queue-status">В очереди</span>
       <div class="queue-progress"><div class="queue-progress-fill"></div></div>
@@ -205,46 +220,63 @@ document.getElementById('batchUploadForm')?.addEventListener('submit', async (e)
     queue.appendChild(item);
     return { file, item, status: item.querySelector('.queue-status'), progress: item.querySelector('.queue-progress-fill') };
   });
+  lucide.createIcons();
 
   const CONCURRENCY = 3;
-  for (let i = 0; i < queueItems.length; i += CONCURRENCY) {
-    const batch = queueItems.slice(i, i + CONCURRENCY);
-    await Promise.all(batch.map(async ({ file, status, progress }) => {
-      status.textContent = 'Загрузка...';
-      progress.style.width = '50%';
+  let completed = 0;
+  let errors = 0;
 
-      const formData = new FormData();
-      formData.append('files', file);
-      if (categoryId) formData.append('category_id', categoryId);
-      if (subcategoryId) formData.append('subcategory_id', subcategoryId);
-      if (ageRating) formData.append('age_rating', ageRating);
+  try {
+    for (let i = 0; i < queueItems.length; i += CONCURRENCY) {
+      if (batchUploadController.signal.aborted) break;
+      const batch = queueItems.slice(i, i + CONCURRENCY);
+      await Promise.all(batch.map(async ({ file, status, progress }) => {
+        if (batchUploadController.signal.aborted) return;
+        status.textContent = 'Загрузка...';
 
-      try {
-        const response = await fetch('/api/media/upload/multiple', {
-          method: 'POST',
-          credentials: 'same-origin',
-          body: formData,
-        });
+        const formData = new FormData();
+        formData.append('files', file);
+        if (categoryId) formData.append('category_id', categoryId);
+        if (subcategoryId) formData.append('subcategory_id', subcategoryId);
+        if (ageRating) formData.append('age_rating', ageRating);
 
-        if (!response.ok) throw new Error();
-        progress.style.width = '100%';
-        status.textContent = 'Готово';
-        status.classList.add('done');
-      } catch {
-        progress.style.width = '100%';
-        progress.style.background = 'var(--danger)';
-        status.textContent = 'Ошибка';
-        status.classList.add('error');
-      }
-    }));
+        try {
+          await api.upload('/api/media/upload/multiple', formData, {
+            onProgress: (percent) => {
+              progress.style.width = `${percent}%`;
+            },
+            signal: batchUploadController.signal,
+          });
+          progress.style.width = '100%';
+          status.textContent = 'Готово';
+          status.classList.add('done');
+          completed++;
+        } catch (err) {
+          progress.style.width = '100%';
+          progress.classList.add('error');
+          status.textContent = batchUploadController.signal.aborted ? 'Отменено' : 'Ошибка';
+          status.classList.add('error');
+          errors++;
+        }
+      }));
+    }
+
+    toast.show(`Загрузка завершена: ${completed} успешно, ${errors} ошибок`);
+  } catch (err) {
+    toast.show(err.message, 'error');
+  } finally {
+    batchUploadController = null;
+    cancelBatchBtn.classList.add('hidden');
+    resetBatchDropZone();
   }
+});
 
-  toast.show(`Загрузка завершена: ${files.length} файлов`);
+function resetBatchDropZone() {
   const dropZone = document.getElementById('batchDropZone');
   const text = dropZone.querySelector('.file-drop-zone-text');
-  text.innerHTML = `<i data-lucide="folder-plus" style="width:32px;height:32px;color:var(--accent);margin-bottom:8px"></i><br><strong>Перетащите файлы</strong> или нажмите для выбора`;
+  text.innerHTML = '<i data-lucide="folder-plus" class="icon-xl icon-accent mb-2"></i><br><strong>Перетащите файлы</strong> или нажмите для выбора';
   lucide.createIcons();
-});
+}
 
 async function loadMediaCards(page = 1, append = false) {
   if (state.adminLoading || !state.adminHasMore) return;
@@ -271,8 +303,8 @@ async function loadMediaCards(page = 1, append = false) {
 
     if (!data.media || data.media.length === 0 && !append) {
       grid.innerHTML = `
-        <div class="empty-state" style="grid-column:1/-1">
-          <div class="empty-state-icon">🖼️</div>
+        <div class="empty-state" class="grid-full">
+          <div class="empty-state-icon"><i data-lucide="image" class="icon-lg"></i></div>
           <div class="empty-state-title">Нет медиа</div>
           <div class="empty-state-text">Загрузите файлы во вкладке "Загрузка"</div>
         </div>`;
@@ -289,7 +321,7 @@ async function loadMediaCards(page = 1, append = false) {
   } catch (err) {
     console.error('Failed to load admin media:', err);
     if (!append) {
-      grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><div class="empty-state-icon">⚠️</div><div class="empty-state-title">Ошибка загрузки</div><div class="empty-state-text">' + (err.message || 'Не удалось загрузить медиа') + '</div></div>';
+      grid.innerHTML = '<div class="empty-state grid-full"><div class="empty-state-icon"><i data-lucide="alert-triangle" class="icon-lg"></i></div><div class="empty-state-title">Ошибка загрузки</div><div class="empty-state-text">' + (err.message || 'Не удалось загрузить медиа') + '</div></div>';
     }
   } finally {
     state.adminLoading = false;
@@ -319,7 +351,7 @@ function showConfirm(message) {
     overlay.className = 'confirm-overlay';
     overlay.innerHTML = `
       <div class="confirm-modal">
-        <div class="confirm-icon"><i data-lucide="alert-triangle" style="width:28px;height:28px;color:var(--warning)"></i></div>
+        <div class="confirm-icon"><i data-lucide="alert-triangle" class="icon-lg icon-warning"></i></div>
         <div class="confirm-message">${message}</div>
         <div class="confirm-actions">
           <button class="btn btn-sm" id="confirmCancel">Отмена</button>
@@ -355,13 +387,14 @@ function createAdminCard(item, index = 0) {
   img.src = item.thumbnail_url || item.url;
   img.className = 'admin-card-thumb';
   img.loading = 'lazy';
+  img.alt = `${item.type} ${item.age_rating !== null ? item.age_rating + ' лет' : ''}`;
   img.addEventListener('click', () => openPreview(item));
   card.appendChild(img);
 
   const overlay = document.createElement('div');
   overlay.className = 'admin-card-overlay';
   overlay.innerHTML = `
-    <span class="admin-card-type">${item.type === 'photo' ? '🖼️' : '🎥'}</span>
+    <span class="admin-card-type"><i data-lucide="${item.type === 'photo' ? 'image' : 'video'}" class="icon-sm"></i> ${item.type === 'photo' ? 'Фото' : 'Видео'}</span>
     <span class="admin-card-id">#${item.id}</span>
   `;
   card.appendChild(overlay);
@@ -411,7 +444,7 @@ function createAdminCard(item, index = 0) {
   const ageSelect = document.createElement('select');
   ageSelect.className = 'admin-card-select';
   ageSelect.innerHTML = '<option value="">Возраст</option>' +
-    [13, 14, 15, 16, 17, 18, 19].map(a => `<option value="${a}" ${item.age_rating === a ? 'selected' : ''}>${a >= 19 ? a + '+' : a}</option>`).join('');
+    AGE_RATINGS.map(a => `<option value="${a}" ${item.age_rating === a ? 'selected' : ''}>${a >= 19 ? a + '+' : a}</option>`).join('');
   ageSelect.addEventListener('change', async () => {
     await saveSingleChange(item.id, { age_rating: ageSelect.value || null });
   });
@@ -419,7 +452,7 @@ function createAdminCard(item, index = 0) {
 
   const delBtn = document.createElement('button');
   delBtn.className = 'btn btn-danger btn-sm';
-  delBtn.innerHTML = '<i data-lucide="trash-2" style="width:14px;height:14px"></i>';
+  delBtn.innerHTML = '<i data-lucide="trash-2" class="icon-sm"></i>';
   delBtn.addEventListener('click', () => deleteSingleMedia(item.id));
   controls.appendChild(delBtn);
 
@@ -443,8 +476,8 @@ function openPreview(item) {
     <div class="modal-overlay"></div>
     <div class="modal-media-full">
       ${item.type === 'video'
-        ? `<video src="${item.url}" controls autoplay style="width:100%;height:100%;object-fit:contain"></video>`
-        : `<img src="${item.url}" style="width:100%;height:100%;object-fit:contain" alt="">`}
+        ? `<video src="${item.url}" controls autoplay class="preview-media"></video>`
+        : `<img src="${item.url}" class="preview-media" alt="${item.type} ${item.age_rating !== null ? item.age_rating + ' лет' : ''}">`}
     </div>
     <button class="modal-close" id="previewClose">
       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
@@ -475,9 +508,9 @@ document.getElementById('selectAllBtn')?.addEventListener('click', () => {
   checkboxes.forEach(cb => cb.checked = state.allSelected);
   const btn = document.getElementById('selectAllBtn');
   if (state.allSelected) {
-    btn.innerHTML = '<i data-lucide="square" style="width:14px;height:14px"></i> Снять всё';
+    btn.innerHTML = '<i data-lucide="square" class="icon-sm"></i> Снять всё';
   } else {
-    btn.innerHTML = '<i data-lucide="check-square" style="width:14px;height:14px"></i> Выбрать всё';
+    btn.innerHTML = '<i data-lucide="check-square" class="icon-sm"></i> Выбрать всё';
   }
   updateSelectedCount();
   lucide.createIcons();
@@ -560,7 +593,7 @@ async function loadCategoriesPanel() {
 
   tbody.innerHTML = '';
   if (cats.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="3"><div class="empty-state"><div class="empty-state-icon">📁</div><div class="empty-state-title">Нет категорий</div></div></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="3"><div class="empty-state"><div class="empty-state-icon"><i data-lucide="folder" class="icon-lg"></i></div><div class="empty-state-title">Нет категорий</div></div></td></tr>';
     return;
   }
 
@@ -579,7 +612,7 @@ async function loadCategoriesPanel() {
           <span class="subcategory-tag">
             ${s.name}
             <button class="btn-icon btn-danger-subcategory" data-delete-subcategory="${s.id}" title="Удалить подкатегорию">
-              <i data-lucide="x" style="width:12px;height:12px"></i>
+              <i data-lucide="x" class="icon-xs"></i>
             </button>
           </span>
         `).join('');
@@ -588,7 +621,7 @@ async function loadCategoriesPanel() {
       <td class="subcategory-list">${subsHtml}</td>
       <td>
         <button class="btn btn-danger btn-sm" data-delete-category="${cat.id}" title="Удалить категорию">
-          <i data-lucide="trash-2" style="width:14px;height:14px"></i>
+          <i data-lucide="trash-2" class="icon-sm"></i>
         </button>
       </td>
     `;
@@ -666,9 +699,10 @@ async function loadTokens() {
     tbody.innerHTML = '';
 
     if (tokens.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6"><div class="empty-state"><div class="empty-state-icon">🔐</div><div class="empty-state-title">Нет токенов</div><div class="empty-state-text">Создайте токен для нового пользователя</div></div></td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6"><div class="empty-state"><div class="empty-state-icon"><i data-lucide="lock" class="icon-lg"></i></div><div class="empty-state-title">Нет токенов</div><div class="empty-state-text">Создайте токен для нового пользователя</div></div></td></tr>';
     } else {
-      const currentTokenId = window.currentUserTokenId;
+      const currentTokenIdInput = document.getElementById('currentTokenId');
+      const currentTokenId = currentTokenIdInput ? parseInt(currentTokenIdInput.value, 10) : null;
       tokens.forEach(token => {
         const row = document.createElement('tr');
         const isActive = token.is_active;
@@ -676,39 +710,30 @@ async function loadTokens() {
         const statusBadge = isActive
           ? '<span class="badge badge-active">активен</span>'
           : '<span class="badge badge-inactive">неактивен</span>';
-        const tokenIdSafe = `token-value-${token.id}`;
         row.innerHTML = `
           <td>
-            <code class="token-code" id="${tokenIdSafe}" style="display:none">${token.token}</code>
-            <span class="token-mask" id="${tokenIdSafe}-mask">••••••••••••</span>
-            <button class="btn btn-sm btn-secondary" data-toggle-visibility="${token.id}" style="margin-left:8px">
-              <i data-lucide="eye" style="width:14px;height:14px"></i>
-              Показать
-            </button>
-            <button class="btn btn-sm btn-secondary" data-copy-token="${token.id}" style="margin-left:4px">
-              <i data-lucide="copy" style="width:14px;height:14px"></i>
-            </button>
+            <span class="token-mask" title="Токен хранится в зашифрованном виде и не отображается">••••••••••••</span>
           </td>
           <td><span class="badge badge-${token.type}">${token.type}</span></td>
           <td><span class="table-cell-date">${new Date(token.created_at).toLocaleDateString()}</span></td>
           <td>
             <span class="table-cell-date" id="token-expires-${token.id}">${token.expires_at ? new Date(token.expires_at).toLocaleDateString() : 'Никогда'}</span>
-            <input type="date" class="token-expires-input" id="token-expires-input-${token.id}" value="${token.expires_at ? token.expires_at.split('T')[0] : ''}" style="display:none">
-            <button class="btn btn-sm btn-secondary" data-edit-expires="${token.id}" style="margin-left:4px">
-              <i data-lucide="pencil" style="width:14px;height:14px"></i>
+            <input type="date" class="token-expires-input hidden" id="token-expires-input-${token.id}" value="${token.expires_at ? token.expires_at.split('T')[0] : ''}">
+            <button class="btn btn-sm btn-secondary ml-1" data-edit-expires="${token.id}" ${isCurrentUser ? 'disabled title="Нельзя изменить срок текущего токена"' : ''}>
+              <i data-lucide="pencil" class="icon-sm"></i>
             </button>
-            <button class="btn btn-sm btn-primary" data-save-expires="${token.id}" id="token-save-expires-${token.id}" style="display:none;margin-left:4px">
-              <i data-lucide="check" style="width:14px;height:14px"></i>
+            <button class="btn btn-sm btn-primary hidden ml-1" data-save-expires="${token.id}" id="token-save-expires-${token.id}" ${isCurrentUser ? 'disabled title="Нельзя изменить срок текущего токена"' : ''}>
+              <i data-lucide="check" class="icon-sm"></i>
             </button>
           </td>
           <td>${statusBadge}</td>
           <td>
-            <button class="btn ${isActive ? 'btn-danger' : 'btn-primary'} btn-sm" data-toggle-token="${token.id}" data-active="${!isActive}">
-              <i data-lucide="${isActive ? 'x' : 'check'}" style="width:14px;height:14px"></i>
+            <button class="btn ${isActive ? 'btn-danger' : 'btn-primary'} btn-sm" data-toggle-token="${token.id}" data-active="${!isActive}" ${isCurrentUser ? 'disabled title="Нельзя деактивировать текущий токен"' : ''}>
+              <i data-lucide="${isActive ? 'x' : 'check'}" class="icon-sm"></i>
               ${isActive ? 'Деактивировать' : 'Активировать'}
             </button>
-            <button class="btn btn-danger btn-sm" data-delete-token="${token.id}" style="margin-left:4px" ${isCurrentUser ? 'disabled title="Нельзя удалить текущий токен"' : ''}>
-              <i data-lucide="trash-2" style="width:14px;height:14px"></i>
+            <button class="btn btn-danger btn-sm ml-1" data-delete-token="${token.id}" title="Удалить токен" ${isCurrentUser ? 'disabled title="Нельзя удалить текущий токен"' : ''}>
+              <i data-lucide="trash-2" class="icon-sm"></i>
             </button>
           </td>
         `;
@@ -718,50 +743,37 @@ async function loadTokens() {
           const active = btn.dataset.active === 'true';
           await toggleToken(id, active);
         });
-        row.querySelector('[data-delete-token]').addEventListener('click', async (e) => {
-          const id = e.currentTarget.dataset.deleteToken;
-          await deleteToken(id);
-        });
-        row.querySelector('[data-toggle-visibility]').addEventListener('click', (e) => {
-          const id = e.currentTarget.dataset.toggleVisibility;
-          const valueEl = document.getElementById(`token-value-${id}`);
-          const maskEl = document.getElementById(`token-value-${id}-mask`);
-          const isHidden = valueEl.style.display === 'none';
-          valueEl.style.display = isHidden ? 'inline' : 'none';
-          maskEl.style.display = isHidden ? 'none' : 'inline';
-          e.currentTarget.innerHTML = isHidden
-            ? '<i data-lucide="eye-off" style="width:14px;height:14px"></i> Скрыть'
-            : '<i data-lucide="eye" style="width:14px;height:14px"></i> Показать';
-          lucide.createIcons();
-        });
-        row.querySelector('[data-copy-token]').addEventListener('click', async (e) => {
-          const id = e.currentTarget.dataset.copyToken;
-          const tokenValue = document.getElementById(`token-value-${id}`).textContent;
-          try {
-            await navigator.clipboard.writeText(tokenValue);
-            toast.show('Токен скопирован');
-          } catch {
-            toast.show('Не удалось скопировать', 'error');
-          }
-        });
-        row.querySelector('[data-edit-expires]').addEventListener('click', (e) => {
-          const id = e.currentTarget.dataset.editExpires;
-          document.getElementById(`token-expires-${id}`).style.display = 'none';
-          document.getElementById(`token-expires-input-${id}`).style.display = 'inline-block';
-          document.getElementById(`token-save-expires-${id}`).style.display = 'inline-flex';
-        });
-        row.querySelector('[data-save-expires]').addEventListener('click', async (e) => {
-          const id = e.currentTarget.dataset.saveExpires;
-          const input = document.getElementById(`token-expires-input-${id}`);
-          const newDate = input.value || null;
-          try {
-            await api.put(`/api/admin/tokens/${id}`, { expires_at: newDate });
-            toast.show('Дата обновлена');
-            loadTokens();
-          } catch (err) {
-            toast.show(err.message, 'error');
-          }
-        });
+        const deleteBtn = row.querySelector('[data-delete-token]');
+        if (deleteBtn) {
+          deleteBtn.addEventListener('click', async (e) => {
+            const id = e.currentTarget.dataset.deleteToken;
+            await deleteToken(id);
+          });
+        }
+        const editExpiresBtn = row.querySelector('[data-edit-expires]');
+        if (editExpiresBtn) {
+          editExpiresBtn.addEventListener('click', (e) => {
+            const id = e.currentTarget.dataset.editExpires;
+            document.getElementById(`token-expires-${id}`).classList.add('hidden');
+            document.getElementById(`token-expires-input-${id}`).classList.remove('hidden');
+            document.getElementById(`token-save-expires-${id}`).classList.remove('hidden');
+          });
+        }
+        const saveExpiresBtn = row.querySelector('[data-save-expires]');
+        if (saveExpiresBtn) {
+          saveExpiresBtn.addEventListener('click', async (e) => {
+            const id = e.currentTarget.dataset.saveExpires;
+            const input = document.getElementById(`token-expires-input-${id}`);
+            const newDate = input.value || null;
+            try {
+              await api.put(`/api/admin/tokens/${id}`, { expires_at: newDate });
+              toast.show('Дата обновлена');
+              loadTokens();
+            } catch (err) {
+              toast.show(err.message, 'error');
+            }
+          });
+        }
         tbody.appendChild(row);
       });
     }
@@ -777,13 +789,45 @@ document.getElementById('createTokenBtn')?.addEventListener('click', async () =>
 
   try {
     const data = await api.post('/api/admin/tokens', { type, expires_at: expiresAt });
-    toast.show(`Токен создан: ${data.token}`);
+    showNewTokenModal(data.token);
     document.getElementById('tokenExpires').value = '';
     loadTokens();
   } catch (err) {
     toast.show(err.message, 'error');
   }
 });
+
+function showNewTokenModal(token) {
+  const modal = document.createElement('div');
+  modal.className = 'modal active';
+  modal.innerHTML = `
+    <div class="modal-overlay"></div>
+    <div class="new-token-modal">
+      <h3>Новый токен создан</h3>
+      <p>Скопируйте его сейчас. После закрытия окна восстановить токен будет невозможно.</p>
+      <div class="new-token-row">
+        <code id="newTokenValue" class="new-token-value">${token}</code>
+        <button class="btn btn-secondary" id="copyNewToken">
+          <i data-lucide="copy" class="icon-md"></i>
+        </button>
+      </div>
+      <button class="btn btn-primary" id="closeNewTokenModal">Я сохранил токен</button>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  lucide.createIcons();
+
+  modal.querySelector('#copyNewToken').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(token);
+      toast.show('Токен скопирован');
+    } catch {
+      toast.show('Не удалось скопировать', 'error');
+    }
+  });
+  modal.querySelector('#closeNewTokenModal').addEventListener('click', () => modal.remove());
+  modal.querySelector('.modal-overlay').addEventListener('click', () => modal.remove());
+}
 
 async function toggleToken(id, isActive) {
   try {
@@ -815,7 +859,7 @@ const duplicatesStatus = document.getElementById('duplicatesStatus');
 
 findDuplicatesBtn?.addEventListener('click', async () => {
   findDuplicatesBtn.disabled = true;
-  findDuplicatesBtn.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px"></div> Поиск...';
+  findDuplicatesBtn.innerHTML = '<div class="spinner" class="spinner-sm"></div> Поиск...';
   duplicatesProgress.style.display = 'block';
   duplicatesProgressFill.style.width = '0%';
   duplicatesResults.innerHTML = '';
@@ -829,7 +873,7 @@ findDuplicatesBtn?.addEventListener('click', async () => {
       duplicatesResults.innerHTML = `
         <div class="upload-card">
           <div class="empty-state">
-            <div class="empty-state-icon">✅</div>
+            <div class="empty-state-icon"><i data-lucide="check-circle" class="icon-lg"></i></div>
             <div class="empty-state-title">Дубликаты не найдены</div>
             <div class="empty-state-text">Все медиа уникальны по обложкам</div>
           </div>
@@ -837,12 +881,12 @@ findDuplicatesBtn?.addEventListener('click', async () => {
     } else {
       duplicatesResults.innerHTML = `
         <div class="upload-card">
-          <div class="upload-card-title" style="display:flex;align-items:center;justify-content:space-between">
+          <div class="upload-card-title flex-between">
             <span>Найдено групп: ${data.groups.length} (${data.totalDuplicates} медиа)</span>
-            <div style="display:flex;gap:8px">
+            <div class="flex-gap-sm">
               <span class="selected-count" id="dupSelectedCount">Выбрано: 0</span>
               <button class="btn btn-danger btn-sm" id="deleteDupSelected" disabled>
-                <i data-lucide="trash-2" style="width:14px;height:14px"></i>
+                <i data-lucide="trash-2" class="icon-sm"></i>
                 Удалить выбранные
               </button>
             </div>
@@ -863,8 +907,8 @@ findDuplicatesBtn?.addEventListener('click', async () => {
             <img src="${item.thumbnail_url}" class="dup-thumb" loading="lazy" alt="">
             <div class="dup-info">
               <span class="dup-id">#${item.id}</span>
-              <span class="dup-type">${item.type === 'photo' ? '🖼️' : '🎥'}</span>
-              ${item.age_rating !== null ? `<span class="card-age" style="position:static;font-size:11px">${item.age_rating >= 19 ? item.age_rating + '+' : item.age_rating}</span>` : ''}
+              <span class="dup-type"><i data-lucide="${item.type === 'photo' ? 'image' : 'video'}" class="icon-xs"></i></span>
+              ${item.age_rating !== null ? `<span class="card-age" class="age-static">${item.age_rating >= 19 ? item.age_rating + '+' : item.age_rating}</span>` : ''}
             </div>
             <label class="dup-checkbox-label">
               <input type="checkbox" class="dup-checkbox" value="${item.id}">
@@ -887,7 +931,7 @@ findDuplicatesBtn?.addEventListener('click', async () => {
     duplicatesResults.innerHTML = `<div class="upload-card"><div class="status-error">Ошибка: ${err.message}</div></div>`;
   } finally {
     findDuplicatesBtn.disabled = false;
-    findDuplicatesBtn.innerHTML = '<i data-lucide="search" style="width:16px;height:16px"></i> Найти дубликаты';
+    findDuplicatesBtn.innerHTML = '<i data-lucide="search" class="icon-md"></i> Найти дубликаты';
     duplicatesStatus.textContent = '';
     setTimeout(() => {
       duplicatesProgress.style.display = 'none';
@@ -931,7 +975,7 @@ async function deleteDupSelected() {
 document.getElementById('backupBtn')?.addEventListener('click', async () => {
   const btn = document.getElementById('backupBtn');
   btn.disabled = true;
-  btn.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px"></div> Скачивание...';
+  btn.innerHTML = '<div class="spinner spinner-sm"></div> Скачивание...';
 
   try {
     const response = await fetch('/api/admin/backup', { credentials: 'same-origin' });
@@ -951,7 +995,7 @@ document.getElementById('backupBtn')?.addEventListener('click', async () => {
     toast.show(err.message, 'error');
   } finally {
     btn.disabled = false;
-    btn.innerHTML = '<i data-lucide="download" style="width:16px;height:16px"></i> Скачать бэкап';
+    btn.innerHTML = '<i data-lucide="download" class="icon-md"></i> Скачать бэкап';
     lucide.createIcons();
   }
 });
@@ -983,7 +1027,7 @@ if (restoreDropZone && restoreFile) {
   restoreFile.addEventListener('change', () => {
     if (restoreFile.files.length > 0) {
       const text = restoreDropZone.querySelector('.file-drop-zone-text');
-      text.innerHTML = `<i data-lucide="file-check" style="width:32px;height:32px;color:var(--success);margin-bottom:8px"></i><br><strong>Выбран: ${restoreFile.files[0].name}</strong>`;
+      text.innerHTML = `<i data-lucide="file-check" class=\"icon-xl icon-success mb-2\"></i><br><strong>Выбран: ${restoreFile.files[0].name}</strong>`;
       restoreBtn.disabled = false;
       restoreStatus.style.display = 'none';
       lucide.createIcons();
@@ -999,7 +1043,7 @@ restoreBtn?.addEventListener('click', async () => {
   if (!await showConfirm('Восстановление заменит все текущие данные в базе. Продолжить?')) return;
 
   restoreBtn.disabled = true;
-  restoreBtn.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px"></div> Восстановление...';
+  restoreBtn.innerHTML = '<div class="spinner spinner-sm"></div> Восстановление...';
   restoreStatus.style.display = 'block';
   restoreStatus.className = '';
   restoreStatus.textContent = 'Восстановление...';
@@ -1008,9 +1052,13 @@ restoreBtn?.addEventListener('click', async () => {
   formData.append('file', restoreFile.files[0]);
 
   try {
+    const meta = document.querySelector('meta[name="csrf-token"]');
     const response = await fetch('/api/admin/restore', {
       method: 'POST',
       credentials: 'same-origin',
+      headers: {
+        'X-CSRF-Token': meta ? meta.content : '',
+      },
       body: formData,
     });
 
@@ -1029,7 +1077,7 @@ restoreBtn?.addEventListener('click', async () => {
     toast.show(err.message, 'error');
   } finally {
     restoreBtn.disabled = false;
-    restoreBtn.innerHTML = '<i data-lucide="refresh-cw" style="width:16px;height:16px"></i> Восстановить';
+    restoreBtn.innerHTML = '<i data-lucide="refresh-cw" class="icon-md"></i> Восстановить';
     lucide.createIcons();
   }
 });

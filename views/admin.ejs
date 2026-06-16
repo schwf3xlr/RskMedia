@@ -2,6 +2,7 @@
 <%- include('partials/navbar', { activePage: 'admin', user: user }) %>
 
 <div class="page-container">
+  <input type="hidden" id="currentTokenId" value="<%= user.token_id %>">
   <div class="page-header">
     <div>
       <h1 class="page-title">Админ-панель</h1>
@@ -9,31 +10,31 @@
     </div>
   </div>
 
-  <% const ages = [13, 14, 15, 16, 17, 18, 19]; %>
+
 
   <div class="admin-tabs">
     <button class="admin-tab active" data-tab="upload">
-      <i data-lucide="upload-cloud" style="width:16px;height:16px"></i>
+      <i data-lucide="upload-cloud" class="icon-md"></i>
       Загрузка
     </button>
     <button class="admin-tab" data-tab="batch">
-      <i data-lucide="settings-2" style="width:16px;height:16px"></i>
+      <i data-lucide="sliders-horizontal" class="icon-md"></i>
       Редактирование
     </button>
     <button class="admin-tab" data-tab="categories">
-      <i data-lucide="folder-tree" style="width:16px;height:16px"></i>
+      <i data-lucide="folder-tree" class="icon-md"></i>
       Категории
     </button>
     <button class="admin-tab" data-tab="tokens">
-      <i data-lucide="key-round" style="width:16px;height:16px"></i>
+      <i data-lucide="key-round" class="icon-md"></i>
       Токены
     </button>
     <button class="admin-tab" data-tab="backup">
-      <i data-lucide="database" style="width:16px;height:16px"></i>
+      <i data-lucide="database" class="icon-md"></i>
       Бэкап
     </button>
     <button class="admin-tab" data-tab="duplicates">
-      <i data-lucide="copy" style="width:16px;height:16px"></i>
+      <i data-lucide="copy" class="icon-md"></i>
       Дубликаты
     </button>
   </div>
@@ -41,13 +42,13 @@
   <div class="admin-panel active" id="uploadPanel">
     <div class="upload-card">
       <div class="upload-card-title">
-        <i data-lucide="upload" style="width:16px;height:16px"></i>
+        <i data-lucide="upload" class="icon-md"></i>
         Одиночная загрузка
       </div>
       <form class="upload-form" id="singleUploadForm">
         <div class="file-drop-zone" id="singleDropZone">
           <div class="file-drop-zone-text">
-            <i data-lucide="image-plus" style="width:28px;height:28px;color:var(--accent);margin-bottom:6px"></i><br>
+            <i data-lucide="image-plus" class="icon-lg icon-accent mb-1"></i><br>
             <strong>Перетащите файл</strong> или нажмите для выбора
           </div>
           <div class="file-drop-zone-sub">JPG, PNG, GIF, WEBP, MP4, MOV до <%= process.env.MAX_FILE_SIZE_MB || 500 %> МБ</div>
@@ -62,30 +63,30 @@
           </select>
           <select class="filter-select" id="singleAge">
             <option value="">Возраст</option>
-            <% for(let i of ages) { %>
+            <% for(let i of AGE_RATINGS) { %>
             <option value="<%= i %>"><%= i >= 19 ? i + '+' : i %></option>
             <% } %>
           </select>
           <button type="submit" class="btn btn-primary">
-            <i data-lucide="upload" style="width:16px;height:16px"></i>
+            <i data-lucide="upload" class="icon-md"></i>
             Загрузить
           </button>
         </div>
       </form>
-      <div class="progress-bar" id="singleProgress" style="display:none;">
+      <div class="progress-bar hidden" id="singleProgress">
         <div class="progress-fill" id="singleProgressFill"></div>
       </div>
     </div>
 
     <div class="upload-card">
       <div class="upload-card-title">
-        <i data-lucide="images" style="width:16px;height:16px"></i>
+        <i data-lucide="gallery-horizontal" class="icon-md"></i>
         Множественная загрузка
       </div>
       <form class="upload-form" id="batchUploadForm">
         <div class="file-drop-zone" id="batchDropZone">
           <div class="file-drop-zone-text">
-            <i data-lucide="folder-plus" style="width:28px;height:28px;color:var(--accent);margin-bottom:6px"></i><br>
+            <i data-lucide="folder-plus" class="icon-lg icon-accent mb-1"></i><br>
             <strong>Перетащите файлы</strong> или нажмите для выбора
           </div>
           <div class="file-drop-zone-sub">До <%= process.env.MAX_BATCH_FILES || 100 %> файлов за раз</div>
@@ -100,13 +101,17 @@
           </select>
           <select class="filter-select" id="batchAge">
             <option value="">Возраст</option>
-            <% for(let i of ages) { %>
+            <% for(let i of AGE_RATINGS) { %>
             <option value="<%= i %>"><%= i >= 19 ? i + '+' : i %></option>
             <% } %>
           </select>
           <button type="submit" class="btn btn-primary">
-            <i data-lucide="upload" style="width:16px;height:16px"></i>
+            <i data-lucide="upload" class="icon-md"></i>
             Загрузить
+          </button>
+          <button type="button" class="btn btn-secondary hidden" id="cancelBatchUpload">
+            <i data-lucide="x" class="icon-md"></i>
+            Отмена
           </button>
         </div>
       </form>
@@ -133,7 +138,7 @@
     <div class="batch-actions-bar">
       <span class="selected-count" id="selectedCount">Выбрано: 0</span>
       <button class="btn btn-sm" id="selectAllBtn">
-        <i data-lucide="check-square" style="width:14px;height:14px"></i>
+        <i data-lucide="check-square" class="icon-sm"></i>
         Выбрать всё
       </button>
       <select class="filter-select" id="batchSetCategory">
@@ -144,16 +149,16 @@
       </select>
       <select class="filter-select" id="batchSetAge">
         <option value="">Установить возраст</option>
-        <% for(let i of ages) { %>
+        <% for(let i of AGE_RATINGS) { %>
         <option value="<%= i %>"><%= i >= 19 ? i + '+' : i %></option>
         <% } %>
       </select>
       <button class="btn btn-primary" id="applyBatch">
-        <i data-lucide="check" style="width:16px;height:16px"></i>
+        <i data-lucide="check" class="icon-md"></i>
         Применить
       </button>
       <button class="btn btn-danger" id="deleteBatch">
-        <i data-lucide="trash-2" style="width:16px;height:16px"></i>
+        <i data-lucide="trash-2" class="icon-md"></i>
         Удалить
       </button>
     </div>
@@ -166,28 +171,28 @@
   <div class="admin-panel" id="categoriesPanel">
     <div class="upload-card">
       <div class="upload-card-title">Добавить категорию</div>
-      <div class="token-form" style="border-bottom:none;padding:0;">
-        <input type="text" id="newCategoryName" placeholder="Название категории">
+      <div class="category-form">
+        <input type="text" class="category-input" id="newCategoryName" placeholder="Название категории">
         <button class="btn btn-primary" id="createCategoryBtn">
-          <i data-lucide="plus" style="width:16px;height:16px"></i>
+          <i data-lucide="plus" class="icon-md"></i>
           Добавить
         </button>
       </div>
     </div>
     <div class="upload-card">
       <div class="upload-card-title">Добавить подкатегорию</div>
-      <div class="token-form" style="border-bottom:none;padding:0;">
-        <select id="newSubcategoryCategory">
+      <div class="category-form">
+        <select id="newSubcategoryCategory" class="filter-select">
           <option value="">Выберите категорию</option>
         </select>
-        <input type="text" id="newSubcategoryName" placeholder="Название подкатегории">
+        <input type="text" class="category-input" id="newSubcategoryName" placeholder="Название подкатегории">
         <button class="btn btn-primary" id="createSubcategoryBtn">
-          <i data-lucide="plus" style="width:16px;height:16px"></i>
+          <i data-lucide="plus" class="icon-md"></i>
           Добавить
         </button>
       </div>
     </div>
-    <div class="table-container" style="margin-top:20px">
+    <div class="table-container mt-3">
       <div class="table-responsive">
         <table class="admin-table" id="categoriesTable">
           <thead>
@@ -206,13 +211,13 @@
   <div class="admin-panel" id="tokensPanel">
     <div class="table-container">
       <div class="token-form">
-        <select id="tokenType" required>
+        <select id="tokenType" class="filter-select" required>
           <option value="client">Client</option>
           <option value="admin">Admin</option>
         </select>
         <input type="date" id="tokenExpires" placeholder="Срок действия (опционально)">
         <button type="button" class="btn btn-primary" id="createTokenBtn">
-          <i data-lucide="plus" style="width:16px;height:16px"></i>
+          <i data-lucide="plus" class="icon-md"></i>
           Создать токен
         </button>
       </div>
@@ -237,37 +242,37 @@
   <div class="admin-panel" id="backupPanel">
     <div class="upload-card">
       <div class="upload-card-title">
-        <i data-lucide="download" style="width:18px;height:18px;vertical-align:middle;margin-right:6px"></i>
+        <i data-lucide="download" class="icon-md icon-inline"></i>
         Скачать бэкап
       </div>
       <p class="card-description">
         Скачать все данные базы данных (категории, подкатегории, токены, медиа, избранное) в JSON-файл
       </p>
       <button class="btn btn-primary" id="backupBtn">
-        <i data-lucide="download" style="width:16px;height:16px"></i>
+        <i data-lucide="download" class="icon-md"></i>
         Скачать бэкап
       </button>
     </div>
 
     <div class="upload-card">
       <div class="upload-card-title">
-        <i data-lucide="upload" style="width:18px;height:18px;vertical-align:middle;margin-right:6px"></i>
+        <i data-lucide="upload" class="icon-md icon-inline"></i>
         Восстановить из бэкапа
       </div>
       <p class="card-description warning">
         Внимание: текущие данные будут полностью заменены. Это действие необратимо.
       </p>
-      <div class="file-drop-zone" id="restoreDropZone" style="margin-bottom:16px">
+      <div class="file-drop-zone mb-2" id="restoreDropZone">
         <div class="file-drop-zone-text">
-          <i data-lucide="file-json" style="width:32px;height:32px;color:var(--warning);margin-bottom:8px"></i><br>
+          <i data-lucide="file-json" class="icon-xl icon-warning mb-2"></i><br>
           <strong>Выберите JSON-файл бэкапа</strong>
         </div>
         <div class="file-drop-zone-sub">.json, до 50 МБ</div>
         <input type="file" id="restoreFile" class="file-input-hidden" accept=".json">
       </div>
-      <div id="restoreStatus" style="display:none;margin-bottom:12px"></div>
+      <div id="restoreStatus" class="hidden mb-2"></div>
       <button class="btn btn-danger" id="restoreBtn" disabled>
-        <i data-lucide="refresh-cw" style="width:16px;height:16px"></i>
+        <i data-lucide="refresh-cw" class="icon-md"></i>
         Восстановить
       </button>
     </div>
@@ -276,27 +281,24 @@
   <div class="admin-panel" id="duplicatesPanel">
     <div class="upload-card">
       <div class="upload-card-title">
-        <i data-lucide="search" style="width:16px;height:16px"></i>
+        <i data-lucide="search" class="icon-md"></i>
         Поиск дубликатов
       </div>
       <p class="card-description">
         Поиск медиа с похожими обложками. Для точных результатов сначала вычислить хеши для всех медиа.
       </p>
       <button class="btn btn-primary" id="findDuplicatesBtn">
-        <i data-lucide="search" style="width:16px;height:16px"></i>
+        <i data-lucide="search" class="icon-md"></i>
         Найти дубликаты
       </button>
-      <div class="progress-bar" id="duplicatesProgress" style="display:none;margin-top:12px">
+      <div class="progress-bar hidden mt-2" id="duplicatesProgress">
         <div class="progress-fill" id="duplicatesProgressFill"></div>
       </div>
-      <div id="duplicatesStatus" style="margin-top:12px"></div>
+      <div id="duplicatesStatus" class="mt-2"></div>
     </div>
     <div id="duplicatesResults"></div>
   </div>
 </div>
 
-<script>
-  window.currentUserTokenId = <%= user && user.token_id ? user.token_id : 'null' %>;
-</script>
-<script src="/js/admin.js" type="module"></script>
+<script src="/js/admin.js" type="module" nonce="<%= nonce %>"></script>
 <%- include('partials/footer') %>

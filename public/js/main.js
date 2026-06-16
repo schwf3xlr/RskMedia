@@ -7,15 +7,17 @@ const auth = {
   },
 
   getAuthHeaders() {
+    const meta = document.querySelector('meta[name="csrf-token"]');
     return {
       'Content-Type': 'application/json',
+      'X-CSRF-Token': meta ? meta.content : '',
     };
   },
 
   async login(token) {
     const response = await fetch('/api/auth/login', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.getAuthHeaders(),
       credentials: 'same-origin',
       body: JSON.stringify({ token }),
     });
@@ -34,6 +36,7 @@ const auth = {
     try {
       await fetch('/api/auth/logout', {
         method: 'POST',
+        headers: this.getAuthHeaders(),
         credentials: 'same-origin',
       });
     } catch (err) {
@@ -74,10 +77,12 @@ const api = {
   },
 
   async requestForm(url, options = {}) {
+    const meta = document.querySelector('meta[name="csrf-token"]');
     const response = await fetch(url, {
       ...options,
       credentials: 'same-origin',
       headers: {
+        'X-CSRF-Token': meta ? meta.content : '',
         ...options.headers,
       },
     });
@@ -93,6 +98,51 @@ const api = {
     }
 
     return response.json();
+  },
+
+  upload(url, formData, { onProgress, onAbort, signal } = {}) {
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', url, true);
+      xhr.withCredentials = true;
+      if (meta) xhr.setRequestHeader('X-CSRF-Token', meta.content);
+
+      if (signal) {
+        signal.addEventListener('abort', () => xhr.abort());
+      }
+
+      xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable && onProgress) {
+          onProgress(Math.round((e.loaded / e.total) * 100));
+        }
+      });
+
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            resolve(JSON.parse(xhr.responseText));
+          } catch {
+            resolve(xhr.responseText);
+          }
+        } else {
+          let message = 'Ошибка загрузки';
+          try {
+            const parsed = JSON.parse(xhr.responseText);
+            if (parsed.error) message = parsed.error;
+          } catch {}
+          reject(new Error(message));
+        }
+      });
+
+      xhr.addEventListener('error', () => reject(new Error('Ошибка сети')));
+      xhr.addEventListener('abort', () => {
+        if (onAbort) onAbort();
+        reject(new Error('Загрузка отменена'));
+      });
+
+      xhr.send(formData);
+    });
   },
 
   get(url) {
