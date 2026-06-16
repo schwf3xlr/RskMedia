@@ -610,30 +610,17 @@
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
-  align-items: end;
+  align-items: flex-end;
 }
 
 .token-form .token-input {
-  flex: 1;
-  min-width: 160px;
+  width: 200px;
   padding: 10px 16px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background-color: var(--bg-2);
+  background: var(--bg-2);
   color: var(--text-primary);
   font-size: 14px;
-  font-family: inherit;
-  transition: var(--transition);
-  outline: none;
-}
-
-.token-form .token-input:hover {
-  border-color: var(--accent);
-}
-
-.token-form .token-input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
 }
 
 /* Status */
