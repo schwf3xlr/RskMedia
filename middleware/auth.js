@@ -9,7 +9,7 @@ const COOKIE_SECRET = process.env.COOKIE_SECRET;
 const COOKIE_OPTIONS = {
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production',
-  sameSite: 'strict',
+  sameSite: 'lax',
   path: '/',
   signed: true,
   maxAge: 7 * 24 * 60 * 60 * 1000,

@@ -11,6 +11,7 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
     await auth.login(token);
     window.location.href = '/';
   } catch (err) {
+    console.error('Login error:', err);
     errorEl.textContent = err.message || 'Ошибка подключения к серверу';
   }
 });
