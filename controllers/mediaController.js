@@ -296,9 +296,11 @@ const MediaController = {
 
     await db.transaction(async (client) => {
       await client.query('DELETE FROM media WHERE id = $1', [id]);
-      await deleteFromS3(media.s3_key);
-      await deleteFromS3(media.thumbnail_s3_key);
     });
+
+    await deleteFromS3(media.s3_key);
+    await deleteFromS3(media.thumbnail_s3_key);
+    if (media.display_s3_key) await deleteFromS3(media.display_s3_key);
 
     res.json({ message: 'Media deleted' });
   },
@@ -309,20 +311,26 @@ const MediaController = {
       return res.status(400).json({ error: 'No IDs provided' });
     }
 
+    const toDeleteFromS3 = [];
     await db.transaction(async (client) => {
       for (const id of ids) {
         const mediaResult = await client.query(
-          'SELECT s3_key, thumbnail_s3_key FROM media WHERE id = $1',
+          'SELECT s3_key, thumbnail_s3_key, display_s3_key FROM media WHERE id = $1',
           [id]
         );
         const media = mediaResult.rows[0];
         if (media) {
           await client.query('DELETE FROM media WHERE id = $1', [id]);
-          await deleteFromS3(media.s3_key);
-          await deleteFromS3(media.thumbnail_s3_key);
+          toDeleteFromS3.push(media);
         }
       }
     });
+
+    for (const media of toDeleteFromS3) {
+      await deleteFromS3(media.s3_key);
+      await deleteFromS3(media.thumbnail_s3_key);
+      if (media.display_s3_key) await deleteFromS3(media.display_s3_key);
+    }
 
     res.json({ message: 'Batch delete completed', deleted: ids.length });
   },

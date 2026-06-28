@@ -602,14 +602,31 @@
 .edit-panel-footer {
   display: flex;
   gap: 8px;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
   padding: 14px 20px;
   border-top: 1px solid var(--border);
   background: var(--bg-3);
 }
 
+.edit-panel-footer-right {
+  display: flex;
+  gap: 8px;
+}
+
 .edit-panel-footer .btn {
   min-width: 90px;
+}
+
+.btn-delete-media {
+  min-width: 0;
+}
+
+.btn-delete-media svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  stroke-width: 2.25;
 }
 
 @keyframes fadeIn {
@@ -1307,6 +1324,7 @@
 .icon-accent { color: var(--accent); }
 .icon-warning { color: var(--warning); }
 .icon-success { color: var(--success); }
+.icon-danger { color: var(--danger); }
 .icon-inline { vertical-align: middle; margin-right: 6px; }
 
 /* === UTILITY === */

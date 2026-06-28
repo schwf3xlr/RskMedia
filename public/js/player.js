@@ -1,5 +1,41 @@
 import { auth, api, toast, categories, favorites } from './main.js';
 
+function showConfirm(message, options = {}) {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.className = 'confirm-overlay';
+    const iconName = options.icon || 'alert-triangle';
+    const okText = options.okText || 'Подтвердить';
+    const cancelText = options.cancelText || 'Отмена';
+    overlay.innerHTML = `
+      <div class="confirm-modal">
+        <div class="confirm-icon"><i data-lucide="${iconName}" class="icon-lg icon-danger"></i></div>
+        <div class="confirm-message">${message}</div>
+        <div class="confirm-actions">
+          <button class="btn btn-sm" id="confirmCancel">${cancelText}</button>
+          <button class="btn btn-danger btn-sm" id="confirmOk">${okText}</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    if (window.lucide) window.lucide.createIcons();
+
+    const close = (result) => {
+      overlay.remove();
+      resolve(result);
+    };
+
+    overlay.querySelector('#confirmCancel').addEventListener('click', () => close(false));
+    overlay.querySelector('#confirmOk').addEventListener('click', () => close(true));
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) close(false);
+    });
+
+    const okBtn = overlay.querySelector('#confirmOk');
+    if (okBtn) okBtn.focus();
+  });
+}
+
 const gallery = {
   media: [],
   page: 1,
@@ -487,6 +523,7 @@ const gallery = {
     const closeBtn = document.getElementById('editPanelClose');
     const cancelBtn = document.getElementById('editCancel');
     const saveBtn = document.getElementById('editSave');
+    const deleteBtn = document.getElementById('editDelete');
     const catSelect = document.getElementById('editCategory');
     const subSelect = document.getElementById('editSubcategory');
     const ageSelect = document.getElementById('editAge');
@@ -575,6 +612,45 @@ const gallery = {
         saveBtn.textContent = 'Сохранить';
       }
     });
+
+    if (deleteBtn) {
+      deleteBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const id = this.currentModalId;
+        if (!id) return;
+        const item = this.media.find(m => m.id == id);
+        if (!item) return;
+
+        const ok = await showConfirm(
+          'Удалить это медиа? Файл будет удалён из S3 без возможности восстановления.',
+          { okText: 'Удалить', icon: 'trash-2' }
+        );
+        if (!ok) return;
+
+        deleteBtn.disabled = true;
+        const originalHtml = deleteBtn.innerHTML;
+        deleteBtn.innerHTML = 'Удаление...';
+        try {
+          await api.delete(`/api/media/${id}`);
+          this.media = this.media.filter(m => m.id != id);
+          const card = document.querySelector(`.media-card[data-id="${id}"]`);
+          if (card) {
+            card.style.transition = 'opacity 0.3s, transform 0.3s';
+            card.style.opacity = '0';
+            card.style.transform = 'scale(0.9)';
+            setTimeout(() => card.remove(), 300);
+          }
+          editPanel.hidden = true;
+          this.closeModal();
+          toast.show('Медиа удалено', 'success');
+        } catch (err) {
+          toast.show(err.message || 'Ошибка удаления', 'error');
+        } finally {
+          deleteBtn.disabled = false;
+          deleteBtn.innerHTML = originalHtml;
+        }
+      });
+    }
   },
 
   currentModalId: null,
@@ -690,12 +766,22 @@ const gallery = {
 
   closeModal() {
     const modal = document.getElementById('mediaModal');
+    const container = document.getElementById('modalMediaContainer');
     modal.classList.remove('active', 'idle');
     modal.setAttribute('aria-hidden', 'true');
     document.body.style.overflow = '';
 
     const editPanel = document.getElementById('modalEditPanel');
     if (editPanel) editPanel.hidden = true;
+
+    if (container) {
+      container.querySelectorAll('video').forEach(v => {
+        v.pause();
+        v.removeAttribute('src');
+        v.load();
+      });
+      container.innerHTML = '';
+    }
 
     if (this.scrollPosition !== undefined) {
       window.scrollTo(0, this.scrollPosition);
