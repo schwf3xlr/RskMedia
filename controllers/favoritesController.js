@@ -2,13 +2,36 @@ const FavoritesModel = require('../models/favorites');
 const { getSignedUrlForKey } = require('../config/s3');
 const { SIGN_URL_EXPIRES } = require('../config/constants');
 
-async function enrichFavorites(favorites) {
+const USE_PROXY = process.env.USE_MEDIA_PROXY !== 'false';
+
+function proxyUrl(req, type, id) {
+  return `${req.protocol}://${req.get('host')}/media/${type}/${id}`;
+}
+
+async function enrichFavorites(favorites, req) {
   return Promise.all(
-    favorites.map(async (f) => ({
-      ...f,
-      url: await getSignedUrlForKey(f.s3_key, SIGN_URL_EXPIRES),
-      thumbnail_url: await getSignedUrlForKey(f.thumbnail_s3_key, SIGN_URL_EXPIRES),
-    }))
+    favorites.map(async (f) => {
+      if (USE_PROXY) {
+        const result = {
+          ...f,
+          url: proxyUrl(req, 'original', f.id),
+          thumbnail_url: proxyUrl(req, 'thumb', f.id),
+        };
+        if (f.display_s3_key) {
+          result.display_url = proxyUrl(req, 'display', f.id);
+        }
+        return result;
+      }
+      const result = {
+        ...f,
+        url: await getSignedUrlForKey(f.s3_key, SIGN_URL_EXPIRES),
+        thumbnail_url: await getSignedUrlForKey(f.thumbnail_s3_key, SIGN_URL_EXPIRES),
+      };
+      if (f.display_s3_key) {
+        result.display_url = await getSignedUrlForKey(f.display_s3_key, SIGN_URL_EXPIRES);
+      }
+      return result;
+    })
   );
 }
 
@@ -32,7 +55,7 @@ const FavoritesController = {
       age,
     });
 
-    const favoritesWithUrls = await enrichFavorites(favorites);
+    const favoritesWithUrls = await enrichFavorites(favorites, req);
 
     res.json({
       media: favoritesWithUrls,

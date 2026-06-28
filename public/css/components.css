@@ -110,6 +110,31 @@
   object-fit: cover;
 }
 
+.media-card.skeleton::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, var(--bg-2) 30%, var(--bg-3) 50%, var(--bg-2) 70%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+  z-index: 0;
+}
+
+.media-card.skeleton img {
+  opacity: 0;
+}
+
+.media-card img {
+  transition: opacity 0.3s ease;
+  position: relative;
+  z-index: 1;
+}
+
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 .card-overlay {
   position: absolute;
   bottom: 0;

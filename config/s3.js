@@ -117,6 +117,19 @@ async function getObjectSize(key) {
   return response.ContentLength || 0;
 }
 
+async function getObjectStream(key) {
+  const command = new GetObjectCommand({
+    Bucket: bucket,
+    Key: key,
+  });
+  const response = await s3Client.send(command);
+  return {
+    body: response.Body,
+    contentType: response.ContentType,
+    contentLength: response.ContentLength,
+  };
+}
+
 module.exports = {
   s3Client,
   uploadToS3,
@@ -124,5 +137,6 @@ module.exports = {
   getSignedUrlForKey,
   getObjectBuffer,
   getObjectSize,
+  getObjectStream,
   bucket,
 };

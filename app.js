@@ -37,7 +37,6 @@ function buildCspDirectives(res) {
     objectSrc: ["'none'"],
     baseUri: ["'self'"],
     formAction: ["'self'"],
-    upgradeInsecureRequests: [],
   };
 }
 
@@ -51,14 +50,14 @@ app.use((req, res, next) => {
 
 app.use((req, res, next) => {
   const cspDirectives = buildCspDirectives(res);
-  if (process.env.NODE_ENV === 'development') {
-    delete cspDirectives.upgradeInsecureRequests;
-  }
   helmet({
     contentSecurityPolicy: {
+      useDefaults: false,
       directives: cspDirectives,
     },
     crossOriginEmbedderPolicy: false,
+    crossOriginOpenerPolicy: false,
+    crossOriginResourcePolicy: false,
   })(req, res, next);
 });
 
@@ -78,6 +77,9 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public'), {
   maxAge: process.env.NODE_ENV === 'production' ? '1d' : 0,
 }));
+
+// Media proxy — serves S3 media through local server (avoids CORS/firewall issues on phone)
+app.use('/media', require('./routes/mediaProxy'));
 
 // Unregister old service workers and prevent cross-origin fetch interception
 app.get('/sw.js', (req, res) => {
@@ -164,8 +166,18 @@ async function start() {
   }
   try {
     await initDatabase();
-    app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
+    app.listen(PORT, '0.0.0.0', () => {
+      const networkInterfaces = require('os').networkInterfaces();
+      let localIP = 'localhost';
+      for (const iface of Object.values(networkInterfaces).flat()) {
+        if (iface.family === 'IPv4' && !iface.internal) {
+          localIP = iface.address;
+          break;
+        }
+      }
+      console.log(`Server running on port ${PORT} [${process.env.NODE_ENV || 'undefined'}]`);
+      console.log(`Local:   http://localhost:${PORT}`);
+      console.log(`Network: http://${localIP}:${PORT}`);
     });
   } catch (err) {
     console.error('Failed to start server:', err);

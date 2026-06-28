@@ -10,13 +10,36 @@ const { getExtensionFromMimeType } = require('../helpers/mime');
 const { SIGN_URL_EXPIRES } = require('../config/constants');
 const db = require('../config/database');
 
-async function enrichMediaUrls(media) {
+function proxyUrl(req, type, id) {
+  return `${req.protocol}://${req.get('host')}/media/${type}/${id}`;
+}
+
+const USE_PROXY = process.env.USE_MEDIA_PROXY !== 'false';
+
+async function enrichMediaUrls(media, req) {
   const mediaWithUrls = await Promise.all(
-    media.map(async (m) => ({
-      ...m,
-      url: await getSignedUrlForKey(m.s3_key, SIGN_URL_EXPIRES),
-      thumbnail_url: await getSignedUrlForKey(m.thumbnail_s3_key, SIGN_URL_EXPIRES),
-    }))
+    media.map(async (m) => {
+      if (USE_PROXY) {
+        const result = {
+          ...m,
+          url: proxyUrl(req, 'original', m.id),
+          thumbnail_url: proxyUrl(req, 'thumb', m.id),
+        };
+        if (m.display_s3_key) {
+          result.display_url = proxyUrl(req, 'display', m.id);
+        }
+        return result;
+      }
+      const result = {
+        ...m,
+        url: await getSignedUrlForKey(m.s3_key, SIGN_URL_EXPIRES),
+        thumbnail_url: await getSignedUrlForKey(m.thumbnail_s3_key, SIGN_URL_EXPIRES),
+      };
+      if (m.display_s3_key) {
+        result.display_url = await getSignedUrlForKey(m.display_s3_key, SIGN_URL_EXPIRES);
+      }
+      return result;
+    })
   );
   return mediaWithUrls;
 }
@@ -41,7 +64,7 @@ const MediaController = {
       age,
     });
 
-    const mediaWithUrls = await enrichMediaUrls(media);
+    const mediaWithUrls = await enrichMediaUrls(media, req);
 
     res.json({ media: mediaWithUrls, total, page: parseInt(page), totalPages: Math.ceil(total / limit) });
   },
@@ -67,7 +90,7 @@ const MediaController = {
       age,
     });
 
-    const mediaWithUrls = await enrichMediaUrls(media);
+    const mediaWithUrls = await enrichMediaUrls(media, req);
 
     res.json({ media: mediaWithUrls, total, page: parseInt(page), totalPages: Math.ceil(total / limit) });
   },
@@ -77,8 +100,19 @@ const MediaController = {
     const media = await MediaModel.getById(id);
     if (!media) return res.status(404).json({ error: 'Media not found' });
 
-    media.url = await getSignedUrlForKey(media.s3_key, SIGN_URL_EXPIRES);
-    media.thumbnail_url = await getSignedUrlForKey(media.thumbnail_s3_key, SIGN_URL_EXPIRES);
+    if (USE_PROXY) {
+      media.url = proxyUrl(req, 'original', media.id);
+      media.thumbnail_url = proxyUrl(req, 'thumb', media.id);
+      if (media.display_s3_key) {
+        media.display_url = proxyUrl(req, 'display', media.id);
+      }
+    } else {
+      media.url = await getSignedUrlForKey(media.s3_key, SIGN_URL_EXPIRES);
+      media.thumbnail_url = await getSignedUrlForKey(media.thumbnail_s3_key, SIGN_URL_EXPIRES);
+      if (media.display_s3_key) {
+        media.display_url = await getSignedUrlForKey(media.display_s3_key, SIGN_URL_EXPIRES);
+      }
+    }
 
     res.json(media);
   },

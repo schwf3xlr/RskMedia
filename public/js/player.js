@@ -18,7 +18,32 @@ const gallery = {
     this.setupFilters();
     this.setupInfiniteScroll();
     this.setupModal();
+    this.setupImageObserver();
     await this.loadMore();
+  },
+
+  setupImageObserver() {
+    this.imageObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (!entry.isIntersecting) return;
+        const card = entry.target;
+        const mediaEl = card.querySelector('img');
+        const fullSrc = card.dataset.fullSrc;
+        if (fullSrc && mediaEl && mediaEl.dataset.src !== fullSrc) {
+          mediaEl.dataset.src = fullSrc;
+          const upgrade = new Image();
+          upgrade.onload = () => {
+            mediaEl.src = fullSrc;
+            card.classList.remove('skeleton');
+          };
+          upgrade.onerror = () => {
+            card.classList.remove('skeleton');
+          };
+          upgrade.src = fullSrc;
+          this.imageObserver.unobserve(card);
+        }
+      });
+    }, { rootMargin: '200px' });
   },
 
   setupFilters() {
@@ -209,7 +234,7 @@ const gallery = {
 
   createCard(item, index = 0) {
     const card = document.createElement('div');
-    card.className = 'media-card';
+    card.className = 'media-card skeleton';
     card.dataset.id = item.id;
     card.style.animationDelay = `${(index % 20) * 0.04}s`;
     card.setAttribute('role', 'listitem');
@@ -217,13 +242,25 @@ const gallery = {
     card.setAttribute('aria-label', `${item.type} ${item.age_rating !== null ? item.age_rating + ' лет' : ''}`);
 
     const isVideo = item.type === 'video';
+    const thumbSrc = item.thumbnail_url || item.url;
+    // For photos, upgrade to display_url when in viewport; for videos, keep thumbnail
+    const fullSrc = isVideo ? null : (item.display_url || item.url);
+    if (fullSrc) card.dataset.fullSrc = fullSrc;
+
     const mediaEl = document.createElement('img');
-    // Use display URL for photos; thumbnail for videos to avoid loading full video
-    mediaEl.src = isVideo ? (item.thumbnail_url || item.url) : (item.display_url || item.url);
+    mediaEl.src = thumbSrc;
     mediaEl.loading = 'lazy';
     mediaEl.decoding = 'async';
     mediaEl.alt = `${item.type} ${item.age_rating !== null ? item.age_rating + ' лет' : ''}`;
+    mediaEl.addEventListener('load', () => card.classList.remove('skeleton'), { once: true });
+    mediaEl.addEventListener('error', () => card.classList.remove('skeleton'), { once: true });
     card.appendChild(mediaEl);
+
+    if (fullSrc && this.imageObserver) {
+      this.imageObserver.observe(card);
+    } else {
+      card.classList.remove('skeleton');
+    }
 
     const overlay = document.createElement('div');
     overlay.className = 'card-overlay';
@@ -333,14 +370,23 @@ const gallery = {
     });
 
     let touchStartX = 0;
+    let touchStartY = 0;
     modal.addEventListener('touchstart', (e) => {
+      // When zoomed in, don't capture swipe for navigation - let image handle it
+      if (this.zoom && this.zoom.scale > 1) return;
       touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
     }, { passive: true });
     modal.addEventListener('touchend', (e) => {
+      // Skip navigation when zoomed in
+      if (this.zoom && this.zoom.scale > 1) return;
       const touchEndX = e.changedTouches[0].clientX;
-      const diff = touchStartX - touchEndX;
-      if (Math.abs(diff) > 50) {
-        if (diff > 0) this.navigateModal(1);
+      const touchEndY = e.changedTouches[0].clientY;
+      const diffX = touchStartX - touchEndX;
+      const diffY = touchStartY - touchEndY;
+      // Only horizontal swipe (X movement greater than Y)
+      if (Math.abs(diffX) > 50 && Math.abs(diffX) > Math.abs(diffY)) {
+        if (diffX > 0) this.navigateModal(1);
         else this.navigateModal(-1);
       }
     }, { passive: true });
@@ -365,6 +411,26 @@ const gallery = {
       z.el.style.cursor = 'grab';
       z.el.style.transition = '';
     });
+
+    document.addEventListener('touchmove', (e) => {
+      const z = this.zoom;
+      if (!z || !z.isDragging || e.touches.length !== 1) return;
+      const dx = e.touches[0].clientX - z.dragStart.x;
+      const dy = e.touches[0].clientY - z.dragStart.y;
+      if (!z.hasDragged && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) {
+        z.hasDragged = true;
+      }
+      z.x = z.dragImageStart.x + dx;
+      z.y = z.dragImageStart.y + dy;
+      z.el.style.transform = `translate(${z.x}px, ${z.y}px) scale(${z.scale})`;
+    }, { passive: true });
+
+    document.addEventListener('touchend', () => {
+      const z = this.zoom;
+      if (!z || !z.isDragging) return;
+      z.isDragging = false;
+      z.el.style.transition = '';
+    }, { passive: true });
   },
 
   currentModalId: null,
@@ -419,6 +485,16 @@ const gallery = {
         zoom.el.style.transition = 'none';
         e.preventDefault();
       });
+
+      mediaEl.addEventListener('touchstart', (e) => {
+        if (e.touches.length !== 1) return;
+        zoom.hasDragged = false;
+        if (zoom.scale === 1) return;
+        zoom.isDragging = true;
+        zoom.dragStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        zoom.dragImageStart = { x: zoom.x, y: zoom.y };
+        zoom.el.style.transition = 'none';
+      }, { passive: true });
 
       mediaEl.addEventListener('click', (e) => {
         e.stopPropagation();
