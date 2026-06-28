@@ -1,6 +1,6 @@
 const auth = {
   token: null,
-  userType: null,
+  userType: window.RSK_USER_TYPE || null,
 
   getToken() {
     return this.token;

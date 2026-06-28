@@ -29,19 +29,28 @@ const gallery = {
         const card = entry.target;
         const mediaEl = card.querySelector('img');
         const fullSrc = card.dataset.fullSrc;
-        if (fullSrc && mediaEl && mediaEl.dataset.src !== fullSrc) {
-          mediaEl.dataset.src = fullSrc;
-          const upgrade = new Image();
-          upgrade.onload = () => {
-            mediaEl.src = fullSrc;
-            card.classList.remove('skeleton');
-          };
-          upgrade.onerror = () => {
-            card.classList.remove('skeleton');
-          };
-          upgrade.src = fullSrc;
+        if (!fullSrc || !mediaEl || card.dataset.upgraded === '1') {
           this.imageObserver.unobserve(card);
+          return;
         }
+
+        const upgrade = new Image();
+        upgrade.onload = () => {
+          // Fade out current, swap src, fade back in — smooth transition
+          card.classList.add('swapping');
+          setTimeout(() => {
+            mediaEl.src = fullSrc;
+            card.dataset.upgraded = '1';
+            requestAnimationFrame(() => {
+              card.classList.remove('swapping', 'skeleton');
+            });
+          }, 310);
+        };
+        upgrade.onerror = () => {
+          card.classList.remove('skeleton');
+        };
+        upgrade.src = fullSrc;
+        this.imageObserver.unobserve(card);
       });
     }, { rootMargin: '200px' });
   },
@@ -244,7 +253,7 @@ const gallery = {
     const isVideo = item.type === 'video';
     const thumbSrc = item.thumbnail_url || item.url;
     // For photos, upgrade to display_url when in viewport; for videos, keep thumbnail
-    const fullSrc = isVideo ? null : (item.display_url || item.url);
+    const fullSrc = isVideo ? null : (item.display_url || null);
     if (fullSrc) card.dataset.fullSrc = fullSrc;
 
     const mediaEl = document.createElement('img');
@@ -332,6 +341,8 @@ const gallery = {
     const prevBtn = document.getElementById('modalPrev');
     const nextBtn = document.getElementById('modalNext');
     const favoriteBtn = document.getElementById('modalFavorite');
+    const editBtn = document.getElementById('modalEdit');
+    const editPanel = document.getElementById('modalEditPanel');
 
     const close = () => this.closeModal();
     if (closeBtn) closeBtn.addEventListener('click', close);
@@ -343,6 +354,11 @@ const gallery = {
 
     if (nextBtn) {
       nextBtn.addEventListener('click', () => this.navigateModal(1));
+    }
+
+    this.setupIdleTimer(modal);
+    if (editBtn && editPanel) {
+      this.setupEditPanel(editBtn, editPanel);
     }
 
     if (favoriteBtn) {
@@ -364,7 +380,17 @@ const gallery = {
 
     document.addEventListener('keydown', (e) => {
       if (!modal.classList.contains('active')) return;
-      if (e.key === 'Escape') this.closeModal();
+      if (e.key === 'Escape') {
+        const editPanel = document.getElementById('modalEditPanel');
+        if (editPanel && !editPanel.hidden) {
+          editPanel.hidden = true;
+          return;
+        }
+        this.closeModal();
+        return;
+      }
+      const tag = (e.target && e.target.tagName) || '';
+      if (tag === 'SELECT' || tag === 'INPUT' || tag === 'TEXTAREA') return;
       if (e.key === 'ArrowLeft') this.navigateModal(-1);
       if (e.key === 'ArrowRight') this.navigateModal(1);
     });
@@ -431,6 +457,124 @@ const gallery = {
       z.isDragging = false;
       z.el.style.transition = '';
     }, { passive: true });
+  },
+
+  setupIdleTimer(modal) {
+    const wake = () => {
+      if (!modal.classList.contains('active')) return;
+      this.resetIdleTimer(modal);
+    };
+    modal.addEventListener('mousemove', wake);
+    modal.addEventListener('mousedown', wake);
+    modal.addEventListener('touchstart', wake, { passive: true });
+    document.addEventListener('keydown', wake);
+  },
+
+  resetIdleTimer(modal) {
+    modal.classList.remove('idle');
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => {
+      const editPanel = document.getElementById('modalEditPanel');
+      if (editPanel && !editPanel.hidden) {
+        this.resetIdleTimer(modal);
+        return;
+      }
+      modal.classList.add('idle');
+    }, 3000);
+  },
+
+  async setupEditPanel(editBtn, editPanel) {
+    const closeBtn = document.getElementById('editPanelClose');
+    const cancelBtn = document.getElementById('editCancel');
+    const saveBtn = document.getElementById('editSave');
+    const catSelect = document.getElementById('editCategory');
+    const subSelect = document.getElementById('editSubcategory');
+    const ageSelect = document.getElementById('editAge');
+
+    editBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const item = this.media.find(m => m.id == this.currentModalId);
+      if (!item) return;
+      editPanel.hidden = false;
+      this.resetIdleTimer(editPanel.closest('.modal'));
+
+      try {
+        const allCats = await categories.loadAll();
+        catSelect.innerHTML = '<option value="">Без категории</option>' +
+          allCats.map(c => `<option value="${c.id}" ${c.id === item.category_id ? 'selected' : ''}>${c.name}</option>`).join('');
+
+        if (item.category_id) {
+          const subs = await categories.loadSubcategories(item.category_id);
+          subSelect.innerHTML = '<option value="">Без подкатегории</option>' +
+            subs.map(s => `<option value="${s.id}" ${s.id === item.subcategory_id ? 'selected' : ''}>${s.name}</option>`).join('');
+        } else {
+          subSelect.innerHTML = '<option value="">Без подкатегории</option>';
+        }
+
+        ageSelect.value = item.age_rating !== null && item.age_rating !== undefined ? String(item.age_rating) : '';
+        setTimeout(() => catSelect.focus(), 50);
+      } catch (err) {
+        console.error('Edit panel load error:', err);
+        toast.show('Ошибка загрузки', 'error');
+        editPanel.hidden = true;
+      }
+    });
+
+    catSelect.addEventListener('change', async () => {
+      subSelect.innerHTML = '<option value="">Без подкатегории</option>';
+      if (catSelect.value) {
+        try {
+          const subs = await categories.loadSubcategories(catSelect.value);
+          subSelect.innerHTML = '<option value="">Без подкатегории</option>' +
+            subs.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+        } catch (err) {
+          console.error('Subcategory load error:', err);
+        }
+      }
+    });
+
+    const closePanel = () => { editPanel.hidden = true; };
+    closeBtn.addEventListener('click', closePanel);
+    cancelBtn.addEventListener('click', closePanel);
+
+    editPanel.addEventListener('click', (e) => {
+      if (e.target === editPanel) closePanel();
+    });
+
+    saveBtn.addEventListener('click', async () => {
+      const id = this.currentModalId;
+      if (!id) return;
+      const updates = {
+        category_id: catSelect.value || null,
+        subcategory_id: subSelect.value || null,
+        age_rating: ageSelect.value ? parseInt(ageSelect.value, 10) : null,
+      };
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Сохранение...';
+      try {
+        await api.put('/api/media/batch-update', { ids: [id], ...updates });
+        const item = this.media.find(m => m.id == id);
+        if (item) {
+          item.category_id = updates.category_id;
+          item.subcategory_id = updates.subcategory_id;
+          item.age_rating = updates.age_rating;
+        }
+        const modal = document.getElementById('mediaModal');
+        const ageEl = document.getElementById('modalAge');
+        if (ageEl) {
+          ageEl.textContent = updates.age_rating !== null ? (updates.age_rating >= 19 ? `${updates.age_rating}+` : `${updates.age_rating}`) : '';
+          ageEl.style.display = updates.age_rating !== null ? 'inline-block' : 'none';
+        }
+        toast.show('Сохранено', 'success');
+        editPanel.hidden = true;
+        this.resetIdleTimer(modal);
+      } catch (err) {
+        toast.show(err.message || 'Ошибка сохранения', 'error');
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Сохранить';
+      }
+    });
   },
 
   currentModalId: null,
@@ -538,6 +682,7 @@ const gallery = {
     modal.classList.add('active');
     modal.setAttribute('aria-hidden', 'false');
     document.body.style.overflow = 'hidden';
+    this.resetIdleTimer(modal);
     this.setupFocusTrap(modal);
     const closeBtn = document.getElementById('modalClose');
     if (closeBtn) closeBtn.focus();
@@ -545,12 +690,20 @@ const gallery = {
 
   closeModal() {
     const modal = document.getElementById('mediaModal');
-    modal.classList.remove('active');
+    modal.classList.remove('active', 'idle');
     modal.setAttribute('aria-hidden', 'true');
     document.body.style.overflow = '';
 
+    const editPanel = document.getElementById('modalEditPanel');
+    if (editPanel) editPanel.hidden = true;
+
     if (this.scrollPosition !== undefined) {
       window.scrollTo(0, this.scrollPosition);
+    }
+
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = null;
     }
 
     this.currentModalId = null;

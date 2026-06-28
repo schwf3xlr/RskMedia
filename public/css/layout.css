@@ -280,6 +280,52 @@
   }
 }
 
+@media (max-width: 600px) {
+  .modal-nav {
+    width: 42px;
+    height: 42px;
+  }
+
+  .modal-nav svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .modal-prev {
+    left: 8px;
+  }
+
+  .modal-next {
+    right: 8px;
+  }
+
+  .modal-close,
+  .modal-edit {
+    width: 40px;
+    height: 40px;
+    top: 12px;
+  }
+
+  .modal-close {
+    right: 12px;
+  }
+
+  .modal-edit {
+    left: 12px;
+  }
+
+  .modal-close svg,
+  .modal-edit svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .modal-bottom-bar {
+    bottom: 14px;
+    padding: 8px 14px;
+  }
+}
+
 @media (max-width: 768px) {
   .navbar-menu {
     display: none;

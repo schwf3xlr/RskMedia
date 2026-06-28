@@ -10,5 +10,6 @@
   <link rel="stylesheet" href="/css/style.css">
   <script src="/js/lucide.min.js" nonce="<%= nonce %>"></script>
   <meta name="csrf-token" content="<%= csrfToken %>">
+  <script nonce="<%= nonce %>">window.RSK_USER_TYPE = '<%= user ? user.type : "client" %>';</script>
 </head>
 <body>

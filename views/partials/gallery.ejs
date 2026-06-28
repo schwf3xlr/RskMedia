@@ -53,6 +53,48 @@
   <button class="modal-close" id="modalClose" aria-label="Закрыть">
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
   </button>
+  <% if (user && user.type === 'admin') { %>
+  <button class="modal-edit" id="modalEdit" aria-label="Редактировать медиа">
+    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+  </button>
+  <div class="modal-edit-panel" id="modalEditPanel" hidden>
+    <div class="edit-panel-content" role="dialog" aria-modal="true" aria-label="Редактирование медиа">
+      <div class="edit-panel-header">
+        <span class="edit-panel-title">Редактировать медиа</span>
+        <button class="edit-panel-close" id="editPanelClose" aria-label="Закрыть">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+      </div>
+      <div class="edit-panel-body">
+        <label class="edit-field">
+          <span class="edit-field-label">Категория</span>
+          <select id="editCategory" class="edit-field-select">
+            <option value="">Без категории</option>
+          </select>
+        </label>
+        <label class="edit-field">
+          <span class="edit-field-label">Подкатегория</span>
+          <select id="editSubcategory" class="edit-field-select">
+            <option value="">Без подкатегории</option>
+          </select>
+        </label>
+        <label class="edit-field">
+          <span class="edit-field-label">Возраст</span>
+          <select id="editAge" class="edit-field-select">
+            <option value="">Не указан</option>
+            <% for(let i of AGE_RATINGS) { %>
+            <option value="<%= i %>"><%= i >= 19 ? i + '+' : i %></option>
+            <% } %>
+          </select>
+        </label>
+      </div>
+      <div class="edit-panel-footer">
+        <button class="btn btn-secondary" id="editCancel">Отмена</button>
+        <button class="btn btn-primary" id="editSave">Сохранить</button>
+      </div>
+    </div>
+  </div>
+  <% } %>
   <button class="modal-nav modal-prev" id="modalPrev" aria-label="Предыдущее">
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
   </button>
