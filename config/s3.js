@@ -93,7 +93,7 @@ async function getSignedUrlForKey(key, expiresIn = 3600) {
   return promise;
 }
 
-async function getObjectBuffer(key) {
+async function getObjectBuffer(key, timeoutMs = 10000) {
   const command = new GetObjectCommand({
     Bucket: bucket,
     Key: key,
@@ -102,9 +102,30 @@ async function getObjectBuffer(key) {
   const stream = response.Body;
   return new Promise((resolve, reject) => {
     const chunks = [];
+    let settled = false;
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try { stream.destroy(); } catch {}
+      reject(new Error(`S3 download timeout after ${timeoutMs}ms: ${key}`));
+    }, timeoutMs);
+
+    const cleanup = () => clearTimeout(timer);
+
     stream.on('data', chunk => chunks.push(chunk));
-    stream.on('end', () => resolve(Buffer.concat(chunks)));
-    stream.on('error', reject);
+    stream.on('end', () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(Buffer.concat(chunks));
+    });
+    stream.on('error', err => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err);
+    });
   });
 }
 

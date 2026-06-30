@@ -433,15 +433,25 @@ const gallery = {
 
     let touchStartX = 0;
     let touchStartY = 0;
+    let swipeArmed = false;
     modal.addEventListener('touchstart', (e) => {
       // When zoomed in, don't capture swipe for navigation - let image handle it
       if (this.zoom && this.zoom.scale > 1) return;
+      // Multi-touch (pinch) must not be interpreted as swipe
+      if (e.touches.length !== 1) { swipeArmed = false; return; }
       touchStartX = e.touches[0].clientX;
       touchStartY = e.touches[0].clientY;
+      swipeArmed = true;
+    }, { passive: true });
+    modal.addEventListener('touchmove', (e) => {
+      // If a second finger lands mid-swipe, disarm navigation
+      if (e.touches.length !== 1) swipeArmed = false;
     }, { passive: true });
     modal.addEventListener('touchend', (e) => {
       // Skip navigation when zoomed in
       if (this.zoom && this.zoom.scale > 1) return;
+      if (!swipeArmed) return;
+      swipeArmed = false;
       const touchEndX = e.changedTouches[0].clientX;
       const touchEndY = e.changedTouches[0].clientY;
       const diffX = touchStartX - touchEndX;
@@ -687,9 +697,30 @@ const gallery = {
         el: mediaEl,
         scale: 1, x: 0, y: 0,
         isDragging: false,
+        isPinching: false,
         hasDragged: false,
         dragStart: { x: 0, y: 0 },
         dragImageStart: { x: 0, y: 0 },
+        pinchStartDist: 0,
+        pinchStartScale: 1,
+        pinchCenter: { x: 0, y: 0 },
+        MAX_SCALE: 5,
+      };
+
+      const dist2 = (a, b) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+      const center2 = (a, b) => ({ x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 });
+      const applyTransform = () => {
+        zoom.el.style.transform = `translate(${zoom.x}px, ${zoom.y}px) scale(${zoom.scale})`;
+      };
+      const clampPan = () => {
+        // Don't allow panning the image completely out of view
+        const rect = zoom.el.getBoundingClientRect();
+        const scaledW = rect.width * zoom.scale;
+        const scaledH = rect.height * zoom.scale;
+        const maxX = Math.max(0, (scaledW - rect.width) / 2);
+        const maxY = Math.max(0, (scaledH - rect.height) / 2);
+        zoom.x = Math.max(-maxX, Math.min(maxX, zoom.x));
+        zoom.y = Math.max(-maxY, Math.min(maxY, zoom.y));
       };
 
       mediaEl.style.cursor = 'zoom-in';
@@ -707,18 +738,79 @@ const gallery = {
       });
 
       mediaEl.addEventListener('touchstart', (e) => {
-        if (e.touches.length !== 1) return;
-        zoom.hasDragged = false;
-        if (zoom.scale === 1) return;
-        zoom.isDragging = true;
-        zoom.dragStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-        zoom.dragImageStart = { x: zoom.x, y: zoom.y };
-        zoom.el.style.transition = 'none';
+        if (e.touches.length === 2) {
+          // Start pinch
+          zoom.isPinching = true;
+          zoom.isDragging = false;
+          zoom.pinchStartDist = dist2(e.touches[0], e.touches[1]);
+          zoom.pinchStartScale = zoom.scale;
+          zoom.pinchCenter = center2(e.touches[0], e.touches[1]);
+          zoom.el.style.transition = 'none';
+        } else if (e.touches.length === 1) {
+          zoom.hasDragged = false;
+          if (zoom.scale === 1) return;
+          zoom.isDragging = true;
+          zoom.dragStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+          zoom.dragImageStart = { x: zoom.x, y: zoom.y };
+          zoom.el.style.transition = 'none';
+        }
       }, { passive: true });
+
+      mediaEl.addEventListener('touchmove', (e) => {
+        if (!zoom.isPinching || e.touches.length !== 2) return;
+        e.preventDefault();
+        const newDist = dist2(e.touches[0], e.touches[1]);
+        const newCenter = center2(e.touches[0], e.touches[1]);
+        const ratio = newDist / zoom.pinchStartDist;
+        const newScale = Math.max(1, Math.min(zoom.MAX_SCALE, zoom.pinchStartScale * ratio));
+
+        // Keep pinch center stable: shift pan so the midpoint of the image stays under the fingers
+        const scaleChange = newScale / zoom.scale;
+        const cx = zoom.pinchCenter.x;
+        const cy = zoom.pinchCenter.y;
+        const rect = zoom.el.getBoundingClientRect();
+        const cxRel = cx - (rect.left + rect.width / 2);
+        const cyRel = cy - (rect.top + rect.height / 2);
+        zoom.x = cxRel - (cxRel - zoom.x) * scaleChange + (newCenter.x - cx);
+        zoom.y = cyRel - (cyRel - zoom.y) * scaleChange + (newCenter.y - cy);
+        zoom.scale = newScale;
+        zoom.pinchCenter = newCenter;
+
+        if (zoom.scale <= 1.01) {
+          zoom.scale = 1;
+          zoom.x = 0;
+          zoom.y = 0;
+          zoom.el.style.cursor = 'zoom-in';
+        } else {
+          zoom.el.style.cursor = 'grab';
+          clampPan();
+        }
+        applyTransform();
+      }, { passive: false });
+
+      const endTouches = (e) => {
+        if (zoom.isPinching && e.touches.length < 2) {
+          zoom.isPinching = false;
+          zoom.el.style.transition = 'transform 0.3s ease';
+          // If scale is ~1, snap back to identity for clean state
+          if (zoom.scale < 1.05) {
+            zoom.scale = 1;
+            zoom.x = 0;
+            zoom.y = 0;
+            applyTransform();
+          }
+        }
+        if (zoom.isDragging && e.touches.length === 0) {
+          zoom.isDragging = false;
+          zoom.el.style.transition = '';
+        }
+      };
+      mediaEl.addEventListener('touchend', endTouches);
+      mediaEl.addEventListener('touchcancel', endTouches);
 
       mediaEl.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (zoom.hasDragged) return;
+        if (zoom.hasDragged || zoom.isPinching) return;
         if (zoom.scale === 1) {
           const rect = mediaEl.getBoundingClientRect();
           const cx = e.clientX - rect.left;
@@ -728,6 +820,7 @@ const gallery = {
           zoom.y = -(cy - rect.height / 2);
           zoom.el.style.cursor = 'grab';
           zoom.el.style.transition = 'transform 0.3s ease';
+          clampPan();
         } else {
           zoom.scale = 1;
           zoom.x = 0;
@@ -735,7 +828,7 @@ const gallery = {
           zoom.el.style.cursor = 'zoom-in';
           zoom.el.style.transition = 'transform 0.3s ease';
         }
-        zoom.el.style.transform = `translate(${zoom.x}px, ${zoom.y}px) scale(${zoom.scale})`;
+        applyTransform();
       });
 
       this.zoom = zoom;

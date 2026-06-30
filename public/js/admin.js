@@ -893,6 +893,8 @@ const duplicatesProgress = document.getElementById('duplicatesProgress');
 const duplicatesProgressFill = document.getElementById('duplicatesProgressFill');
 const duplicatesStatus = document.getElementById('duplicatesStatus');
 
+let lastFailedIds = [];
+
 findDuplicatesBtn?.addEventListener('click', async () => {
   findDuplicatesBtn.disabled = true;
   findDuplicatesBtn.innerHTML = '<div class="spinner" class="spinner-sm"></div> Поиск...';
@@ -901,12 +903,32 @@ findDuplicatesBtn?.addEventListener('click', async () => {
   duplicatesResults.innerHTML = '';
   duplicatesStatus.textContent = 'Вычисление хешей и поиск групп...';
 
+  const isRetry = lastFailedIds.length > 0;
+  const payload = isRetry ? { retry_ids: lastFailedIds } : {};
+
   try {
-    const data = await api.post('/api/admin/find-duplicates');
+    const data = await api.post('/api/admin/find-duplicates', payload);
     duplicatesProgressFill.style.width = '100%';
+    lastFailedIds = Array.isArray(data.failedIds) ? data.failedIds : [];
+
+    // Warning banner for items that failed to hash (S3 timeout / error)
+    let warningHtml = '';
+    if (lastFailedIds.length > 0) {
+      warningHtml = `
+        <div class="upload-card" style="border-color: var(--color-warning, #f59e0b);">
+          <div class="status-warning" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+            <i data-lucide="alert-triangle" class="icon-md"></i>
+            <span>Не удалось обработать <strong>${lastFailedIds.length}</strong> медиа (таймаут/ошибка скачивания с S3). Они не участвуют в поиске.</span>
+            <button class="btn btn-secondary btn-sm" id="retryFailedHashes">
+              <i data-lucide="refresh-cw" class="icon-sm"></i>
+              Повторить
+            </button>
+          </div>
+        </div>`;
+    }
 
     if (!data.groups || data.groups.length === 0) {
-      duplicatesResults.innerHTML = `
+      duplicatesResults.innerHTML = warningHtml + `
         <div class="upload-card">
           <div class="empty-state">
             <div class="empty-state-icon"><i data-lucide="check-circle" class="icon-lg"></i></div>
@@ -915,7 +937,7 @@ findDuplicatesBtn?.addEventListener('click', async () => {
           </div>
         </div>`;
     } else {
-      duplicatesResults.innerHTML = `
+      duplicatesResults.innerHTML = warningHtml + `
         <div class="upload-card">
           <div class="upload-card-title flex-between">
             <span>Найдено групп: ${data.groups.length} (${data.totalDuplicates} медиа)</span>
@@ -962,6 +984,11 @@ findDuplicatesBtn?.addEventListener('click', async () => {
         cb.addEventListener('change', updateDupSelectedCount);
       });
       document.getElementById('deleteDupSelected')?.addEventListener('click', deleteDupSelected);
+    }
+
+    const retryBtn = document.getElementById('retryFailedHashes');
+    if (retryBtn) {
+      retryBtn.addEventListener('click', () => findDuplicatesBtn.click());
     }
   } catch (err) {
     duplicatesResults.innerHTML = `<div class="upload-card"><div class="status-error">Ошибка: ${err.message}</div></div>`;

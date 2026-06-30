@@ -382,20 +382,54 @@ const AdminController = {
         END $$;
       `);
 
-      const nullHash = await db.query(
-        'SELECT id, type, s3_key, thumbnail_s3_key FROM media WHERE phash IS NULL'
-      );
+      // If client supplied retry_ids, only re-hash those (otherwise process everything missing)
+      const retryIds = Array.isArray(req.body?.retry_ids)
+        ? req.body.retry_ids.filter(id => Number.isInteger(id) && id > 0)
+        : null;
 
-      if (nullHash.rows.length > 0) {
-        for (const row of nullHash.rows) {
-          try {
-            const buf = await getObjectBuffer(row.thumbnail_s3_key);
-            const hash = await computeDHash(buf);
-            await db.query('UPDATE media SET phash = $1 WHERE id = $2', [hash.toString(), row.id]);
-          } catch (err) {
-            console.error(`Failed to compute hash for media ${row.id}:`, err.message);
+      const HASH_CONCURRENCY = 10;
+      const HASH_TIMEOUT_MS = 10000;
+
+      const computeHashes = async (rows) => {
+        const failed = [];
+        if (rows.length === 0) return failed;
+
+        const queue = rows.slice();
+        const workers = Array.from(
+          { length: Math.min(HASH_CONCURRENCY, queue.length) },
+          async () => {
+            while (queue.length > 0) {
+              const row = queue.shift();
+              try {
+                const buf = await getObjectBuffer(row.thumbnail_s3_key, HASH_TIMEOUT_MS);
+                const hash = await computeDHash(buf);
+                await db.query(
+                  'UPDATE media SET phash = $1 WHERE id = $2',
+                  [hash.toString(), row.id]
+                );
+              } catch (err) {
+                console.error(`Failed to compute hash for media ${row.id}:`, err.message);
+                failed.push(row.id);
+              }
+            }
           }
-        }
+        );
+        await Promise.all(workers);
+        return failed;
+      };
+
+      let failedIds = [];
+      if (retryIds && retryIds.length > 0) {
+        const targets = await db.query(
+          'SELECT id, type, s3_key, thumbnail_s3_key FROM media WHERE id = ANY($1::int[])',
+          [retryIds]
+        );
+        failedIds = await computeHashes(targets.rows);
+      } else {
+        const nullHash = await db.query(
+          'SELECT id, type, s3_key, thumbnail_s3_key FROM media WHERE phash IS NULL'
+        );
+        failedIds = await computeHashes(nullHash.rows);
       }
 
       const allHashed = await db.query(
@@ -458,7 +492,7 @@ const AdminController = {
       );
 
       const totalDuplicates = result.reduce((s, g) => s + g.items.length, 0);
-      res.json({ groups: result, totalDuplicates });
+      res.json({ groups: result, totalDuplicates, failedIds });
     } catch (err) {
       console.error('findDuplicates error:', err);
       res.status(500).json({ error: 'Ошибка поиска дубликатов' });
