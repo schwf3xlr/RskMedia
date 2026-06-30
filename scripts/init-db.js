@@ -1,4 +1,5 @@
 const db = require('../config/database');
+const { ensureDatabase } = require('../config/database');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 
@@ -104,6 +105,7 @@ async function migrate() {
 
 async function initDatabase() {
   try {
+    await ensureDatabase();
     await db.query(initSQL);
     console.log('Database tables initialized successfully');
     await migrate();

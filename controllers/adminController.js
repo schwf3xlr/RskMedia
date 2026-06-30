@@ -188,8 +188,8 @@ const AdminController = {
         },
         media: {
           required: ['type', 's3_key', 'thumbnail_s3_key'],
-          allowed: ['id', 'type', 's3_key', 'thumbnail_s3_key', 'display_s3_key', 'category_id', 'subcategory_id', 'age_rating', 'phash', 'uploaded_at'],
-          types: { id: 'int', type: 'enum:photo,video', s3_key: 'string', thumbnail_s3_key: 'string', display_s3_key: 'string', category_id: 'int', subcategory_id: 'int', age_rating: 'int', phash: 'string', uploaded_at: 'datetime' },
+          allowed: ['id', 'type', 's3_key', 'thumbnail_s3_key', 'display_s3_key', 'file_size', 'category_id', 'subcategory_id', 'age_rating', 'phash', 'uploaded_at'],
+          types: { id: 'int', type: 'enum:photo,video', s3_key: 'string', thumbnail_s3_key: 'string', display_s3_key: 'string', file_size: 'int', category_id: 'int', subcategory_id: 'int', age_rating: 'int', phash: 'string', uploaded_at: 'datetime' },
         },
         favorites: {
           required: ['token_id', 'media_id'],

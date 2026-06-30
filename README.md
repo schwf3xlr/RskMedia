@@ -81,7 +81,6 @@ RskMedia — это приложение на Node.js / Express, которое 
 
 - Инициализация базы с идемпотентными миграциями (`scripts/init-db.js`)
 - Первоначальный бутстрап: создаёт токен админа и однократно печатает его plaintext в консоль
-- Скрипт бэкапа для устаревшей колонки `file_size` (`scripts/populate-file-sizes.js`)
 
 ---
 
@@ -205,8 +204,7 @@ RskMedia/
 │   └── fileValidator.js         Валидация magic bytes контента
 │
 ├── scripts/
-│   ├── init-db.js               CREATE TABLE миграции + сидинг токена админа
-│   └── populate-file-sizes.js   Бэкап file_size через S3 HeadObject
+│   └── init-db.js               CREATE TABLE миграции + сидинг токена админа
 │
 ├── views/
 │   ├── main.ejs                 Страница галереи
@@ -411,7 +409,7 @@ Network: http://192.168.x.x:3000
 | `s3_key` | `VARCHAR(500) NOT NULL` | Оригинальный файл |
 | `thumbnail_s3_key` | `VARCHAR(500) NOT NULL` | Миниатюра 400 px |
 | `display_s3_key` | `VARCHAR(500)` | Display-вариант 1920 px (nullable) |
-| `file_size` | `BIGINT` | Бэкапится через `scripts/populate-file-sizes.js` |
+| `file_size` | `BIGINT` | Размер оригинального файла в байтах (из S3) |
 | `category_id` | `INTEGER` | `FK categories(id) ON DELETE SET NULL` |
 | `subcategory_id` | `INTEGER` | `FK subcategories(id) ON DELETE SET NULL` |
 | `age_rating` | `INTEGER` | `CHECK BETWEEN 0 AND 21` |

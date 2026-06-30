@@ -4,6 +4,33 @@ import { AGE_RATINGS } from './constants.js';
 // Server-side middleware already ensures admin access for /admin route.
 // If this script somehow runs without admin rights, backend calls will fail with 403.
 
+async function copyToClipboard(text) {
+  // 1. Modern API — works on HTTPS / localhost
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {}
+  }
+  // 2. Legacy fallback — works on HTTP, but deprecated
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.top = '-1000px';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    if (ok) return true;
+  } catch {}
+  // 3. Last resort — caller should select the text manually
+  return false;
+}
+
 const state = {
   adminMissingFilters: [],
   currentMediaPage: 1,
@@ -297,7 +324,6 @@ async function loadMediaCards(page = 1, append = false) {
     }
     console.log('Loading admin media:', url);
     const data = await api.get(url);
-    console.log('Admin media response:', data);
     state.adminHasMore = page < data.totalPages;
 
     if (!append) grid.innerHTML = '';
@@ -819,12 +845,21 @@ function showNewTokenModal(token) {
   lucide.createIcons();
 
   modal.querySelector('#copyNewToken').addEventListener('click', async () => {
-    try {
-      await navigator.clipboard.writeText(token);
+    const ok = await copyToClipboard(token);
+    if (ok) {
       toast.show('Токен скопирован');
-    } catch {
-      toast.show('Не удалось скопировать', 'error');
+    } else {
+      toast.show('Выделите токен и нажмите Ctrl+C', 'error');
     }
+  });
+
+  // Allow manual selection on click
+  modal.querySelector('#newTokenValue').addEventListener('click', (e) => {
+    const range = document.createRange();
+    range.selectNodeContents(e.target);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
   });
   modal.querySelector('#closeNewTokenModal').addEventListener('click', () => modal.remove());
   modal.querySelector('.modal-overlay').addEventListener('click', () => modal.remove());
