@@ -656,6 +656,7 @@ async function loadCategoriesPanel() {
       if (!await showConfirm(`Удалить категорию "${cat.name}"?`)) return;
       try {
         await api.delete(`/api/categories/${cat.id}`);
+        categories.invalidateSubcategories();
         toast.show('Категория удалена');
         await loadAdminCategories();
         loadCategoriesPanel();
@@ -670,6 +671,7 @@ async function loadCategoriesPanel() {
         if (!await showConfirm(`Удалить подкатегорию "${subName}"?`)) return;
         try {
           await api.delete(`/api/categories/subcategories/${subId}`);
+          categories.invalidateSubcategories(cat.id);
           toast.show('Подкатегория удалена');
           loadCategoriesPanel();
         } catch (err) {
@@ -708,6 +710,7 @@ document.getElementById('createSubcategoryBtn')?.addEventListener('click', async
   }
   try {
     await api.post('/api/categories/subcategories', { categoryId, name });
+    categories.invalidateSubcategories(categoryId);
     toast.show('Подкатегория создана');
     input.value = '';
     loadCategoriesPanel();

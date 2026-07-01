@@ -1,7 +1,8 @@
 const express = require('express');
+const crypto = require('crypto');
 const db = require('../config/database');
 const { s3Client, bucket } = require('../config/s3');
-const { GetObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
+const { GetObjectCommand } = require('@aws-sdk/client-s3');
 
 const router = express.Router();
 
@@ -15,8 +16,11 @@ const MAX_CACHE_SIZE = 5 * 1024 * 1024;
 const MAX_CACHE_ENTRIES = 500;
 const CACHE_TTL_MS = 3600 * 1000;
 const CACHE_TTL_S = 3600;
+const S3KEY_CACHE_TTL_MS = 60 * 1000;
+const S3KEY_CACHE_MAX = 2000;
 
 const contentCache = new Map();
+const s3KeyCache = new Map();
 const inFlight = new Map();
 
 function cacheGet(key) {
@@ -40,40 +44,26 @@ function cacheSet(key, buffer, contentType) {
   contentCache.set(key, { buffer, contentType, expiresAt: Date.now() + CACHE_TTL_MS });
 }
 
-function parseRange(header, totalSize) {
-  if (!header || totalSize <= 0) return null;
-  const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
-  if (!match) return null;
-
-  const startStr = match[1];
-  const endStr = match[2];
-
-  let start;
-  let end;
-  if (startStr === '' && endStr !== '') {
-    const suffix = parseInt(endStr, 10);
-    if (isNaN(suffix) || suffix <= 0) return null;
-    start = Math.max(0, totalSize - suffix);
-    end = totalSize - 1;
-  } else {
-    start = startStr === '' ? 0 : parseInt(startStr, 10);
-    end = endStr === '' ? totalSize - 1 : parseInt(endStr, 10);
-  }
-
-  if (isNaN(start) || isNaN(end) || start < 0 || start > end || start >= totalSize) {
+function s3KeyCacheGet(id) {
+  const entry = s3KeyCache.get(id);
+  if (!entry) return null;
+  if (entry.expiresAt < Date.now()) {
+    s3KeyCache.delete(id);
     return null;
   }
-  return { start, end: Math.min(end, totalSize - 1) };
+  return entry;
 }
 
-async function getMediaSize(s3Key) {
-  try {
-    const response = await s3Client.send(new HeadObjectCommand({ Bucket: bucket, Key: s3Key }));
-    return response.ContentLength || 0;
-  } catch (err) {
-    if (err.name === 'NoSuchKey' || err.$metadata?.httpStatusCode === 404) return null;
-    throw err;
+function s3KeyCacheSet(id, field, s3Key) {
+  if (s3KeyCache.size >= S3KEY_CACHE_MAX) {
+    const firstKey = s3KeyCache.keys().next().value;
+    s3KeyCache.delete(firstKey);
   }
+  s3KeyCache.set(id, { field, s3Key, expiresAt: Date.now() + S3KEY_CACHE_TTL_MS });
+}
+
+function etagFor(s3Key) {
+  return '"' + crypto.createHash('sha1').update(s3Key).digest('hex') + '"';
 }
 
 async function fetchFullBuffer(cacheKey, s3Key) {
@@ -105,14 +95,15 @@ async function fetchFullBuffer(cacheKey, s3Key) {
   return promise;
 }
 
-async function streamFromS3(s3Key, range, res) {
+async function streamFromS3(s3Key, rangeHeader, res) {
   const params = { Bucket: bucket, Key: s3Key };
-  if (range) params.Range = `bytes=${range.start}-${range.end}`;
+  if (rangeHeader) params.Range = rangeHeader;
 
   const response = await s3Client.send(new GetObjectCommand(params));
 
-  res.status(range ? 206 : 200);
-  res.setHeader('Content-Type', response.ContentType || 'image/jpeg');
+  res.status(rangeHeader ? 206 : 200);
+  if (response.ContentType) res.setHeader('Content-Type', response.ContentType);
+  else res.setHeader('Content-Type', 'image/jpeg');
   if (response.ContentRange) res.setHeader('Content-Range', response.ContentRange);
   if (response.ContentLength !== undefined) res.setHeader('Content-Length', response.ContentLength);
 
@@ -127,80 +118,127 @@ async function streamFromS3(s3Key, range, res) {
   response.Body.pipe(res);
 }
 
+function parseRange(header, totalSize) {
+  if (!header || totalSize <= 0) return null;
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!match) return null;
+
+  const startStr = match[1];
+  const endStr = match[2];
+
+  let start, end;
+  if (startStr === '' && endStr !== '') {
+    const suffix = parseInt(endStr, 10);
+    if (isNaN(suffix) || suffix <= 0) return null;
+    start = Math.max(0, totalSize - suffix);
+    end = totalSize - 1;
+  } else {
+    start = startStr === '' ? 0 : parseInt(startStr, 10);
+    end = endStr === '' ? totalSize - 1 : parseInt(endStr, 10);
+  }
+
+  if (isNaN(start) || isNaN(end) || start < 0 || start > end || start >= totalSize) {
+    return null;
+  }
+  return { start, end: Math.min(end, totalSize - 1) };
+}
+
 async function handle(req, res, s3Key, isHead) {
   const cacheKey = `${req.params.type}:${req.params.id}`;
   const rangeHeader = req.headers.range;
+  const etag = etagFor(s3Key);
 
   res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('Cache-Control', `public, max-age=${CACHE_TTL_S}`);
+  res.setHeader('ETag', etag);
 
-  let totalSize = null;
-  let contentType = null;
-  let fullBuffer = null;
-
-  const cached = cacheGet(cacheKey);
-  if (cached) {
-    totalSize = cached.buffer.length;
-    contentType = cached.contentType;
-    fullBuffer = cached.buffer;
-  } else {
-    totalSize = await getMediaSize(s3Key);
-    if (totalSize === null) return res.status(404).end();
+  // ETag-based 304: skip body if client already has this version
+  if (req.headers['if-none-match'] === etag) {
+    return res.status(304).end();
   }
 
-  let range = null;
+  // Range request on cache miss: let S3 handle the range directly (no buffer needed)
   if (rangeHeader) {
-    range = parseRange(rangeHeader, totalSize);
+    const cached = cacheGet(cacheKey);
+    if (!cached) {
+      try {
+        await streamFromS3(s3Key, rangeHeader, res);
+      } catch (err) {
+        if (err.name === 'NoSuchKey' || err.$metadata?.httpStatusCode === 404) {
+          return res.status(404).end();
+        }
+        throw err;
+      }
+      return;
+    }
+    // Cached: parse and slice
+    const totalSize = cached.buffer.length;
+    const range = parseRange(rangeHeader, totalSize);
     if (!range) {
       res.setHeader('Content-Range', `bytes */${totalSize}`);
       return res.status(416).end();
     }
+    const slice = cached.buffer.subarray(range.start, range.end + 1);
+    res.status(206);
+    res.setHeader('Content-Type', cached.contentType);
+    res.setHeader('Content-Length', slice.length);
+    res.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${totalSize}`);
+    return res.end(slice);
+  }
+
+  // Non-range request: prefer buffer cache
+  const cached = cacheGet(cacheKey);
+  if (cached) {
+    if (isHead) {
+      res.setHeader('Content-Length', cached.buffer.length);
+      res.setHeader('Content-Type', cached.contentType);
+      return res.status(200).end();
+    }
+    res.status(200);
+    res.setHeader('Content-Type', cached.contentType);
+    res.setHeader('Content-Length', cached.buffer.length);
+    return res.end(cached.buffer);
   }
 
   if (isHead) {
-    res.setHeader('Content-Length', totalSize);
-    if (contentType) res.setHeader('Content-Type', contentType);
-    return res.status(200).end();
-  }
-
-  if (fullBuffer) {
-    if (range) {
-      const slice = fullBuffer.subarray(range.start, range.end + 1);
-      res.status(206);
-      res.setHeader('Content-Type', contentType);
-      res.setHeader('Content-Length', slice.length);
-      res.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${totalSize}`);
-      return res.end(slice);
-    }
-    res.status(200);
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Length', fullBuffer.length);
-    return res.end(fullBuffer);
-  }
-
-  if (!range) {
     try {
-      const { buffer, contentType: ct } = await fetchFullBuffer(cacheKey, s3Key);
-      res.status(200);
-      res.setHeader('Content-Type', ct);
-      res.setHeader('Content-Length', buffer.length);
-      return res.end(buffer);
+      const response = await s3Client.send(new GetObjectCommand({ Bucket: bucket, Key: s3Key, Range: 'bytes=0-0' }));
+      const totalSize = parseInt((response.ContentRange || '').split('/')[1], 10) || response.ContentLength || 0;
+      if (response.ContentType) res.setHeader('Content-Type', response.ContentType);
+      res.setHeader('Content-Length', totalSize);
+      return res.status(200).end();
     } catch (err) {
-      if (err.name === 'NoSuchKey' || err.$metadata?.httpStatusCode === 404) {
-        return res.status(404).end();
-      }
+      if (err.name === 'NoSuchKey' || err.$metadata?.httpStatusCode === 404) return res.status(404).end();
       throw err;
     }
   }
 
+  // Full fetch (single GetObject, no extra HeadObject)
   try {
-    await streamFromS3(s3Key, range, res);
+    const { buffer, contentType } = await fetchFullBuffer(cacheKey, s3Key);
+    res.status(200);
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Length', buffer.length);
+    return res.end(buffer);
   } catch (err) {
     if (err.name === 'NoSuchKey' || err.$metadata?.httpStatusCode === 404) {
       return res.status(404).end();
     }
     throw err;
   }
+}
+
+async function lookupS3Key(id, field) {
+  const cached = s3KeyCacheGet(id);
+  if (cached && cached.field === field) return cached.s3Key;
+
+  const result = await db.query(
+    `SELECT ${field} FROM media WHERE id = $1`,
+    [id]
+  );
+  const s3Key = result.rows[0]?.[field];
+  if (s3Key) s3KeyCacheSet(id, field, s3Key);
+  return s3Key || null;
 }
 
 function makeRoute(isHead) {
@@ -210,11 +248,7 @@ function makeRoute(isHead) {
     if (!field) return res.status(400).end();
 
     try {
-      const result = await db.query(
-        `SELECT ${field} FROM media WHERE id = $1`,
-        [id]
-      );
-      const s3Key = result.rows[0]?.[field];
+      const s3Key = await lookupS3Key(id, field);
       if (!s3Key) return res.status(404).end();
 
       await handle(req, res, s3Key, isHead);

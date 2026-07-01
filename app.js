@@ -66,7 +66,13 @@ app.use(cors({
   credentials: true,
 }));
 
-app.use(compression());
+app.use(compression({
+  filter: (req, res) => {
+    // /media/* serves already-compressed JPEG/PNG/MP4/WebM — compression is wasted CPU
+    if (req.path.startsWith('/media/')) return false;
+    return compression.filter(req, res);
+  },
+}));
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
 // Body parsing
@@ -78,7 +84,9 @@ app.use(express.static(path.join(__dirname, 'public'), {
   maxAge: process.env.NODE_ENV === 'production' ? '1d' : 0,
 }));
 
-// Media proxy — serves S3 media through local server (avoids CORS/firewall issues on phone)
+// Media proxy — fallback only. Default is signed URLs (USE_MEDIA_PROXY !== 'true'),
+// which let the browser download directly from S3 for maximum speed.
+// Set USE_MEDIA_PROXY=true to force proxying (e.g. if S3 CORS isn't configured).
 app.use('/media', require('./routes/mediaProxy'));
 
 // Unregister old service workers and prevent cross-origin fetch interception

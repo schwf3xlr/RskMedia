@@ -212,6 +212,8 @@ const toast = {
 };
 
 const categories = {
+  _subcategoriesCache: new Map(),
+
   async loadAll() {
     return api.get('/api/categories');
   },
@@ -231,7 +233,24 @@ const categories = {
       });
       return Array.from(grouped.values());
     }
-    return api.get(`/api/categories/subcategories/${categoryId}`);
+    // Dedupe: return the same in-flight or resolved promise for repeated calls
+    // (e.g. 50 admin cards each pre-populate the subcategory <select>)
+    const cacheKey = String(categoryId);
+    if (this._subcategoriesCache.has(cacheKey)) {
+      return this._subcategoriesCache.get(cacheKey);
+    }
+    const promise = api.get(`/api/categories/subcategories/${categoryId}`);
+    this._subcategoriesCache.set(cacheKey, promise);
+    promise.catch(() => this._subcategoriesCache.delete(cacheKey));
+    return promise;
+  },
+
+  invalidateSubcategories(categoryId) {
+    if (categoryId != null) {
+      this._subcategoriesCache.delete(String(categoryId));
+    } else {
+      this._subcategoriesCache.clear();
+    }
   },
 
   populateSelect(select, items, emptyLabel = 'Все') {

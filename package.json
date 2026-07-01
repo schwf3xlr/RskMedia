@@ -1,6 +1,6 @@
 {
   "name": "rskmedia",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "Optimized media gallery with S3 storage",
   "main": "app.js",
   "scripts": {
