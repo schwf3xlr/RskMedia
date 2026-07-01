@@ -13,6 +13,7 @@ const { csrfProtection, csrfTokenMiddleware } = require('./middleware/csrf');
 const { nonceMiddleware } = require('./middleware/nonce');
 const { AGE_RATINGS } = require('./config/constants');
 const { apiLimiter } = require('./middleware/rateLimiter');
+const dbPool = require('./config/database').pool;
 
 dotenv.config();
 
@@ -176,7 +177,7 @@ async function start() {
   }
   try {
     await initDatabase();
-    app.listen(PORT, '0.0.0.0', () => {
+    const server = app.listen(PORT, '0.0.0.0', () => {
       const networkInterfaces = require('os').networkInterfaces();
       let localIP = 'localhost';
       for (const iface of Object.values(networkInterfaces).flat()) {
@@ -189,10 +190,64 @@ async function start() {
       console.log(`Local:   http://localhost:${PORT}`);
       console.log(`Network: http://${localIP}:${PORT}`);
     });
+    registerGracefulShutdown(server);
   } catch (err) {
     console.error('Failed to start server:', err);
     process.exit(1);
   }
+}
+
+// Graceful shutdown: stop accepting new connections, let in-flight requests
+// drain, close the DB pool, then exit. Without this, `pm2 restart` / Docker
+// stop kills in-flight uploads mid-stream and can leave half-written files
+// in S3 (multipart upload parts that never get CompletedMultipartUpload).
+function registerGracefulShutdown(server) {
+  let shuttingDown = false;
+
+  async function shutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`\n${signal} received, shutting down gracefully...`);
+
+    // Force-exit watchdog: if cleanup stalls (hung upload, etc.) we still
+    // exit eventually so the process supervisor doesn't have to SIGKILL.
+    const forceExitTimer = setTimeout(() => {
+      console.error('Graceful shutdown timed out after 15s, forcing exit');
+      process.exit(1);
+    }, 15000);
+    forceExitTimer.unref();
+
+    try {
+      // 1. Stop accepting new connections. Existing requests continue.
+      await new Promise((resolve) => server.close(resolve));
+      console.log('HTTP server closed');
+
+      // 2. Drain in-flight S3 multipart uploads / open DB queries.
+      await dbPool.end();
+      console.log('DB pool drained');
+    } catch (err) {
+      console.error('Error during shutdown:', err);
+    } finally {
+      clearTimeout(forceExitTimer);
+      process.exit(0);
+    }
+  }
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+
+  // Unhandled errors should be logged with context but not crash the process
+  // silently. Log + continue for now (the supervisor will restart on real
+  // crashes via process.exit in uncaughtException below).
+  process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled promise rejection:', reason);
+  });
+  process.on('uncaughtException', (err) => {
+    console.error('Uncaught exception:', err);
+    // Give the logger a tick to flush, then exit so the supervisor restarts
+    // a clean process (avoids undefined state after a synchronous throw).
+    setImmediate(() => process.exit(1));
+  });
 }
 
 start();

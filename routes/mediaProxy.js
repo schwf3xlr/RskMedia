@@ -1,5 +1,6 @@
 const express = require('express');
 const crypto = require('crypto');
+const sharp = require('sharp');
 const db = require('../config/database');
 const { s3Client, bucket } = require('../config/s3');
 const { GetObjectCommand } = require('@aws-sdk/client-s3');
@@ -18,6 +19,20 @@ const CACHE_TTL_MS = 3600 * 1000;
 const CACHE_TTL_S = 3600;
 const S3KEY_CACHE_TTL_MS = 60 * 1000;
 const S3KEY_CACHE_MAX = 2000;
+
+// Allowed width buckets for adaptive sizing. Anything outside the range is
+// rejected (returns 400) so we don't accidentally serve arbitrary sharp
+// requests that would flood the cache. Includes tiny sizes (32/64/128) for
+// the modal blur-up placeholder - sharp downsamples a large image to these
+// widths so the JPEG is genuinely small (~1-3 KB) and inlines into CSS
+// quickly even on slow connections.
+const ALLOWED_WIDTHS = [32, 64, 128, 400, 600, 800, 1200, 1920];
+const ALLOWED_FORMATS = {
+  webp: { contentType: 'image/webp', sharpFormat: 'webp', quality: 82 },
+  avif: { contentType: 'image/avif', sharpFormat: 'avif', quality: 60 },
+  jpeg: { contentType: 'image/jpeg', sharpFormat: 'jpeg', quality: 85 },
+  png: { contentType: 'image/png', sharpFormat: 'png', quality: 90 },
+};
 
 const contentCache = new Map();
 const s3KeyCache = new Map();
@@ -95,6 +110,42 @@ async function fetchFullBuffer(cacheKey, s3Key) {
   return promise;
 }
 
+// Parse and validate `?w=` and `?format=` query parameters. Returns either
+// { kind: 'passthrough' } (no transform needed) or { kind: 'transform', width, format }
+// with validated values. Rejects anything outside the allow-list.
+function parseTransformParams(query) {
+  const w = query.w !== undefined ? parseInt(query.w, 10) : null;
+  const f = query.format !== undefined ? String(query.format).toLowerCase() : null;
+
+  if (w === null && f === null) return { kind: 'passthrough' };
+
+  if (w !== null && (!ALLOWED_WIDTHS.includes(w) || w <= 0)) {
+    return { kind: 'invalid', reason: `Width must be one of: ${ALLOWED_WIDTHS.join(', ')}` };
+  }
+  if (f !== null && !ALLOWED_FORMATS[f]) {
+    return { kind: 'invalid', reason: `Format must be one of: ${Object.keys(ALLOWED_FORMATS).join(', ')}` };
+  }
+  return { kind: 'transform', width: w, format: f };
+}
+
+// Apply sharp resize + format conversion. The output is cached separately
+// from the source buffer so the S3 hit is shared across all transform
+// variants.
+async function applyTransform(buffer, width, format) {
+  let pipeline = sharp(buffer, { failOn: 'none', limitInputPixels: false });
+  if (width) {
+    pipeline = pipeline.resize(width, null, { withoutEnlargement: true, fit: 'inside' });
+  }
+  if (format) {
+    const spec = ALLOWED_FORMATS[format];
+    pipeline = pipeline.toFormat(spec.sharpFormat, { quality: spec.quality });
+  } else {
+    // No format requested - keep source format but re-encode for consistency
+    // (e.g. progressive JPEG). Skip re-encode if not specified to save CPU.
+  }
+  return { buffer: await pipeline.toBuffer(), format };
+}
+
 async function streamFromS3(s3Key, rangeHeader, res) {
   const params = { Bucket: bucket, Key: s3Key };
   if (rangeHeader) params.Range = rangeHeader;
@@ -148,17 +199,36 @@ async function handle(req, res, s3Key, isHead) {
   const rangeHeader = req.headers.range;
   const etag = etagFor(s3Key);
 
+  // Parse transform params (w/format). Range requests on transformed output
+  // are not supported - clients that need ranges should request the source.
+  const transform = parseTransformParams(req.query);
+  if (transform.kind === 'invalid') {
+    return res.status(400).json({ error: transform.reason });
+  }
+  const isTransformed = transform.kind === 'transform';
+
+  // For transformed output, derive a variant-specific cache key and ETag.
+  // Different (width, format) combinations produce different bytes, so they
+  // must not collide.
+  const variantKey = isTransformed
+    ? `${cacheKey}?w=${transform.width ?? ''}&f=${transform.format ?? ''}`
+    : cacheKey;
+  const variantEtag = isTransformed
+    ? '"' + crypto.createHash('sha1').update(variantKey).digest('hex') + '"'
+    : etag;
+
   res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('Cache-Control', `public, max-age=${CACHE_TTL_S}`);
-  res.setHeader('ETag', etag);
+  res.setHeader('ETag', variantEtag);
 
   // ETag-based 304: skip body if client already has this version
-  if (req.headers['if-none-match'] === etag) {
+  if (req.headers['if-none-match'] === variantEtag) {
     return res.status(304).end();
   }
 
-  // Range request on cache miss: let S3 handle the range directly (no buffer needed)
-  if (rangeHeader) {
+  // Range request on cache miss (only for non-transformed, since transforms
+  // produce fixed-size buffers): let S3 handle the range directly.
+  if (rangeHeader && !isTransformed) {
     const cached = cacheGet(cacheKey);
     if (!cached) {
       try {
@@ -186,8 +256,8 @@ async function handle(req, res, s3Key, isHead) {
     return res.end(slice);
   }
 
-  // Non-range request: prefer buffer cache
-  const cached = cacheGet(cacheKey);
+  // Non-range request: prefer buffer cache (variant-specific for transforms)
+  const cached = cacheGet(variantKey);
   if (cached) {
     if (isHead) {
       res.setHeader('Content-Length', cached.buffer.length);
@@ -200,7 +270,7 @@ async function handle(req, res, s3Key, isHead) {
     return res.end(cached.buffer);
   }
 
-  if (isHead) {
+  if (isHead && !isTransformed) {
     try {
       const response = await s3Client.send(new GetObjectCommand({ Bucket: bucket, Key: s3Key, Range: 'bytes=0-0' }));
       const totalSize = parseInt((response.ContentRange || '').split('/')[1], 10) || response.ContentLength || 0;
@@ -213,13 +283,37 @@ async function handle(req, res, s3Key, isHead) {
     }
   }
 
-  // Full fetch (single GetObject, no extra HeadObject)
+  // Fetch source from S3 (or cache), then apply transform if requested.
   try {
-    const { buffer, contentType } = await fetchFullBuffer(cacheKey, s3Key);
+    const { buffer: srcBuffer, contentType: srcContentType } = await fetchFullBuffer(cacheKey, s3Key);
+
+    if (!isTransformed) {
+      res.status(200);
+      res.setHeader('Content-Type', srcContentType);
+      res.setHeader('Content-Length', srcBuffer.length);
+      return res.end(srcBuffer);
+    }
+
+    // Videos can't be resized/formatted as still images. Fall back to
+    // original bytes with the source content type.
+    if (!srcContentType.startsWith('image/')) {
+      res.status(200);
+      res.setHeader('Content-Type', srcContentType);
+      res.setHeader('Content-Length', srcBuffer.length);
+      return res.end(srcBuffer);
+    }
+
+    const { buffer: outBuffer, format } = await applyTransform(srcBuffer, transform.width, transform.format);
+    const outContentType = format ? ALLOWED_FORMATS[format].contentType : srcContentType;
+
+    if (outBuffer.length <= MAX_CACHE_SIZE) {
+      cacheSet(variantKey, outBuffer, outContentType);
+    }
+
     res.status(200);
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Length', buffer.length);
-    return res.end(buffer);
+    res.setHeader('Content-Type', outContentType);
+    res.setHeader('Content-Length', outBuffer.length);
+    return res.end(outBuffer);
   } catch (err) {
     if (err.name === 'NoSuchKey' || err.$metadata?.httpStatusCode === 404) {
       return res.status(404).end();

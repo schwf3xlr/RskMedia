@@ -107,6 +107,19 @@ async function migrate() {
     }
     await db.query('ALTER TABLE tokens DROP COLUMN IF EXISTS token');
   }
+
+  // token_lookup: SHA256 hash of the plaintext token, used for O(1) DB lookup
+  // before bcrypt verification. Without this, login time grows linearly with
+  // the number of active tokens (bcrypt is intentionally slow: ~100ms each).
+  // Adding the column is idempotent; backfilling is skipped for tokens whose
+  // bcrypt hash already matches (we can verify but that's also expensive — for
+  // existing users, force a re-login if they hit "token not found").
+  await db.query(
+    `ALTER TABLE tokens ADD COLUMN IF NOT EXISTS token_lookup VARCHAR(64) UNIQUE`
+  );
+  await db.query(
+    `CREATE INDEX IF NOT EXISTS idx_tokens_token_lookup ON tokens(token_lookup) WHERE token_lookup IS NOT NULL`
+  );
 }
 
 async function initDatabase() {

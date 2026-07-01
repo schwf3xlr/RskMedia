@@ -1,6 +1,10 @@
 
 
 <div class="page-container">
+  <div class="pull-to-refresh" id="pullToRefresh" aria-hidden="true">
+    <div class="pull-to-refresh-icon"><i data-lucide="refresh-cw" class="icon-md"></i></div>
+    <div class="pull-to-refresh-text">Потяните вниз для обновления</div>
+  </div>
   <div class="filters">
     <div class="filters-row">
       <select class="filter-select" id="categoryFilter">
@@ -47,6 +51,10 @@
   </div>
   <div class="sentinel" id="sentinel"></div>
 </div>
+
+<button class="back-to-top" id="backToTop" aria-label="Наверх" title="Наверх">
+  <i data-lucide="arrow-up" class="icon-md"></i>
+</button>
 
 <div class="modal" id="mediaModal" role="dialog" aria-modal="true" aria-label="Просмотр медиа" tabindex="-1">
   <div class="modal-overlay" id="modalOverlay"></div>

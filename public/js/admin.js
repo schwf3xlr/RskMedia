@@ -153,11 +153,18 @@ function setupDropZone(dropZoneId, fileInputId) {
   fileInput.addEventListener('change', () => {
     const files = fileInput.files;
     const text = dropZone.querySelector('.file-drop-zone-text');
+    // Build with DOM APIs so file names containing < / > are rendered as text
+    // rather than parsed as HTML (filename-based XSS in the upload zone).
+    text.textContent = '';
+    const strong = document.createElement('strong');
     if (files.length === 1) {
-      text.innerHTML = `<strong>Выбран: ${files[0].name}</strong>`;
+      strong.textContent = `Выбран: ${files[0].name}`;
     } else if (files.length > 1) {
-      text.innerHTML = `<strong>Выбрано: ${files.length} файлов</strong>`;
+      strong.textContent = `Выбрано: ${files.length} файлов`;
+    } else {
+      return;
     }
+    text.appendChild(strong);
   });
 }
 
@@ -206,8 +213,16 @@ document.getElementById('singleUploadForm')?.addEventListener('submit', async (e
 function resetSingleDropZone() {
   const dropZone = document.getElementById('singleDropZone');
   const text = dropZone.querySelector('.file-drop-zone-text');
-  text.innerHTML = '<i data-lucide="image-plus" class="icon-xl icon-accent mb-2"></i><br><strong>Перетащите файл</strong> или нажмите для выбора';
+  // Use the same icon class as the initial HTML (icon-lg) so the reset
+  // state visually matches the page on first load - was icon-xl before
+  // which made the icon noticeably bigger after each upload.
+  text.innerHTML = '<i data-lucide="image-plus" class="icon-lg icon-accent mb-1"></i><br><strong>Перетащите файл</strong> или нажмите для выбора';
   lucide.createIcons();
+  // Explicitly clear the file input - form.reset() doesn't always update
+  // the visual "filename" placeholder on all browsers, and we want the
+  // drop zone to look fully empty before the user picks the next file.
+  const fileInput = document.getElementById('singleFile');
+  if (fileInput) fileInput.value = '';
 }
 
 // Batch upload
@@ -239,14 +254,34 @@ document.getElementById('batchUploadForm')?.addEventListener('submit', async (e)
     const item = document.createElement('div');
     item.className = 'queue-item';
     const icon = file.type.startsWith('video') ? 'video' : 'image';
-    item.innerHTML = `
-      <div class="queue-icon"><i data-lucide="${icon}" class="icon-md"></i></div>
-      <span class="queue-name">${file.name}</span>
-      <span class="queue-status">В очереди</span>
-      <div class="queue-progress"><div class="queue-progress-fill"></div></div>
-    `;
+
+    // Build with DOM APIs to avoid XSS via crafted filenames. The previous
+    // template-string + innerHTML would render "<img onerror=...>" or other
+    // HTML embedded in a filename as actual markup.
+    const iconWrap = document.createElement('div');
+    iconWrap.className = 'queue-icon';
+    const iconEl = document.createElement('i');
+    iconEl.setAttribute('data-lucide', icon);
+    iconEl.className = 'icon-md';
+    iconWrap.appendChild(iconEl);
+
+    const name = document.createElement('span');
+    name.className = 'queue-name';
+    name.textContent = file.name;
+
+    const status = document.createElement('span');
+    status.className = 'queue-status';
+    status.textContent = 'В очереди';
+
+    const progressWrap = document.createElement('div');
+    progressWrap.className = 'queue-progress';
+    const progressFill = document.createElement('div');
+    progressFill.className = 'queue-progress-fill';
+    progressWrap.appendChild(progressFill);
+
+    item.append(iconWrap, name, status, progressWrap);
     queue.appendChild(item);
-    return { file, item, status: item.querySelector('.queue-status'), progress: item.querySelector('.queue-progress-fill') };
+    return { file, item, status, progress: progressFill };
   });
   lucide.createIcons();
 
@@ -296,14 +331,30 @@ document.getElementById('batchUploadForm')?.addEventListener('submit', async (e)
     batchUploadController = null;
     cancelBatchBtn.classList.add('hidden');
     resetBatchDropZone();
+    // Auto-clear the queue items after a short delay so the file-type
+    // icons (image/video) don't linger forever - users reported the icons
+    // staying on screen long after the upload finished.
+    setTimeout(() => {
+      const queue = document.getElementById('uploadQueue');
+      if (!queue) return;
+      // Fade-out then remove
+      queue.querySelectorAll('.queue-item').forEach(item => {
+        item.classList.add('queue-item-removing');
+      });
+      setTimeout(() => { queue.innerHTML = ''; }, 400);
+    }, 5000);
   }
 });
 
 function resetBatchDropZone() {
   const dropZone = document.getElementById('batchDropZone');
   const text = dropZone.querySelector('.file-drop-zone-text');
-  text.innerHTML = '<i data-lucide="folder-plus" class="icon-xl icon-accent mb-2"></i><br><strong>Перетащите файлы</strong> или нажмите для выбора';
+  // Match the initial HTML icon size (icon-lg) for visual consistency.
+  text.innerHTML = '<i data-lucide="folder-plus" class="icon-lg icon-accent mb-1"></i><br><strong>Перетащите файлы</strong> или нажмите для выбора';
   lucide.createIcons();
+  // Also clear the file input - see resetSingleDropZone for rationale.
+  const fileInput = document.getElementById('batchFiles');
+  if (fileInput) fileInput.value = '';
 }
 
 async function loadMediaCards(page = 1, append = false) {
@@ -1049,7 +1100,14 @@ async function loadStats() {
     const data = await api.get('/api/admin/stats');
     renderStats(container, data);
   } catch (err) {
-    container.innerHTML = `<div class="status-error">Ошибка загрузки статистики: ${err.message}</div>`;
+    // Use DOM APIs to keep err.message as text. While admins see this panel,
+    // err.message can come from arbitrary server text and shouldn't be parsed
+    // as HTML.
+    container.textContent = '';
+    const errEl = document.createElement('div');
+    errEl.className = 'status-error';
+    errEl.textContent = `Ошибка загрузки статистики: ${err.message}`;
+    container.appendChild(errEl);
   }
 }
 
@@ -1269,7 +1327,14 @@ if (restoreDropZone && restoreFile) {
   restoreFile.addEventListener('change', () => {
     if (restoreFile.files.length > 0) {
       const text = restoreDropZone.querySelector('.file-drop-zone-text');
-      text.innerHTML = `<i data-lucide="file-check" class=\"icon-xl icon-success mb-2\"></i><br><strong>Выбран: ${restoreFile.files[0].name}</strong>`;
+      // Build with DOM APIs — file names can contain HTML metacharacters.
+      text.textContent = '';
+      const icon = document.createElement('i');
+      icon.setAttribute('data-lucide', 'file-check');
+      icon.className = 'icon-xl icon-success mb-2';
+      const strong = document.createElement('strong');
+      strong.textContent = `Выбран: ${restoreFile.files[0].name}`;
+      text.append(icon, document.createElement('br'), strong);
       restoreBtn.disabled = false;
       restoreStatus.style.display = 'none';
       lucide.createIcons();

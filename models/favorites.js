@@ -36,7 +36,11 @@ const FavoritesModel = {
     const whereClause = where.query;
     let idx = where.idx;
 
-    const order = SORT_MAP[sort] || 'f.added_at DESC';
+    // Same stable-sort rule as config/constants.js SORT_MAP: when many
+    // favorites share the same `added_at` (e.g. user adds several in quick
+    // succession), we need a deterministic tiebreaker or pagination can
+    // duplicate/skip rows between pages.
+    const order = SORT_MAP[sort] || 'f.added_at DESC, m.id DESC';
     const query = `
       SELECT m.*, c.name as category_name, s.name as subcategory_name,
              COUNT(*) OVER() AS total_count

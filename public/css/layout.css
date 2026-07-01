@@ -5,7 +5,11 @@
   left: 0;
   right: 0;
   z-index: 1000;
-  background: rgba(5, 5, 7, 0.7);
+  /* Use theme-aware background. The dark default is a translucent black
+     so the navbar floats over the page; the light theme uses a translucent
+     white so it stays "white" instead of inheriting the dark hardcoded
+     value that was here before. */
+  background: color-mix(in srgb, var(--bg-1) 75%, transparent);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   border-bottom: 1px solid var(--border);
@@ -100,6 +104,37 @@
   color: #ff5555;
   background: rgba(239, 68, 68, 0.1);
 }
+
+/* Theme toggle button: shows the icon for the OPPOSITE theme (the one
+   you'd switch to if you clicked). In dark mode you see the sun icon
+   (suggesting "switch to light"). Square 40x40 with the icon centered;
+   no navbar-btn class so it doesn't inherit the danger-red hover. */
+.navbar-theme-toggle {
+  color: var(--text-secondary);
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  margin: 0;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+}
+.navbar-theme-toggle i {
+  width: 18px;
+  height: 18px;
+  transition: opacity 0.2s ease, transform 0.3s ease;
+  display: block;
+}
+.navbar-theme-toggle:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+/* Dark mode (default): show sun icon (click to switch to light) */
+:root[data-theme="dark"] .navbar-theme-icon-dark { display: none; }
+:root[data-theme="light"] .navbar-theme-icon-light { display: none; }
 
 .navbar-toggle {
   display: none;

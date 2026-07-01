@@ -1,9 +1,15 @@
 const CategoryModel = require('../models/category');
 const SubcategoryModel = require('../models/subcategory');
 
+// Categories and subcategories change very rarely. Cache them for 60s on the
+// client so the browser doesn't refetch on every navigation between gallery
+// and favourites pages.
+const READ_CACHE_CONTROL = 'private, max-age=60';
+
 const CategoryController = {
   async getAll(req, res) {
     const categories = await CategoryModel.getAll();
+    res.setHeader('Cache-Control', READ_CACHE_CONTROL);
     res.json(categories);
   },
 
@@ -54,12 +60,14 @@ const CategoryController = {
 
   async getAllSubcategories(req, res) {
     const subcategories = await SubcategoryModel.getAll();
+    res.setHeader('Cache-Control', READ_CACHE_CONTROL);
     res.json(subcategories);
   },
 
   async getSubcategories(req, res) {
     const { category_id } = req.params;
     const subcategories = await SubcategoryModel.getByCategoryId(category_id);
+    res.setHeader('Cache-Control', READ_CACHE_CONTROL);
     res.json(subcategories);
   },
 

@@ -116,7 +116,18 @@ async function authenticateToken(req, res, next) {
       return res.status(403).json({ error: 'Token revoked' });
     }
 
-    const hashMatch = await bcrypt.compare(token, user.jwt_hash);
+    // Compare against the SHA256 hash that login() stored (see
+    // authController.login). Constant-time compare avoids leaking match
+    // information via timing differences. timingSafeEqual requires equal-
+    // length buffers, so fall back to bcrypt when we encounter a legacy
+    // hash from before the SHA256 migration (length != 64 hex chars).
+    let hashMatch;
+    if (user.jwt_hash.length === 64) {
+      const expected = crypto.createHash('sha256').update(token).digest('hex');
+      hashMatch = crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(user.jwt_hash));
+    } else {
+      hashMatch = await bcrypt.compare(token, user.jwt_hash);
+    }
     if (!hashMatch) {
       res.clearCookie('auth_token', CLEAR_COOKIE_OPTIONS);
       if (isPageRequest(req)) {

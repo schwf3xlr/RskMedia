@@ -15,6 +15,10 @@
         <i data-lucide="heart" class="icon-md"></i>
         Избранное
       </a>
+      <button class="navbar-link navbar-theme-toggle" id="themeToggle" aria-label="Сменить тему" title="Сменить тему">
+        <i data-lucide="sun" class="navbar-theme-icon-light" id="themeIconLight"></i>
+        <i data-lucide="moon" class="navbar-theme-icon-dark" id="themeIconDark"></i>
+      </button>
       <% if (user && user.type === 'admin') { %>
       <a href="/admin" class="navbar-link navbar-link-admin <%= activePage === 'admin' ? 'active' : '' %>">
         <i data-lucide="shield" class="icon-md"></i>

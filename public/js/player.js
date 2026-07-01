@@ -47,6 +47,22 @@ const gallery = {
   favoriteCache: new Map(),
   focusTrap: null,
   abortController: null,
+  currentModalId: null,
+  // Tracks the modal's position in `this.media` rather than re-searching via
+  // findIndex. Without this, if two entries in `this.media` happen to share
+  // the same id (e.g. legacy data, or a future bug in pagination), navigateModal
+  // would always pick the *first* match — pressing "next" while viewing the
+  // first duplicate would open the second duplicate (visually identical),
+  // and pressing "next" again would loop back to the first one, leaving the
+  // user stuck on the same card while "back" still worked correctly (it lands
+  // on the unique record before the duplicates).
+  _currentModalIndex: -1,
+  // Cached reference to the media object currently shown in the modal. The
+  // edit panel and save/delete handlers previously did `this.media.find(m =>
+  // m.id == currentModalId)`, which also returns the *first* match — for
+  // duplicates that means admin actions (delete, save edits) could target
+  // the wrong copy. Storing the actual object here removes the ambiguity.
+  _currentModalItem: null,
 
   async init() {
     // Categories + subcategories are independent — fetch in parallel
@@ -55,6 +71,8 @@ const gallery = {
     this.setupFilters();
     this.setupInfiniteScroll();
     this.setupModal();
+    this.setupBackToTop();
+    this.setupPullToRefresh();
     await this.loadMore();
   },
 
@@ -210,6 +228,11 @@ const gallery = {
       } else {
         this.media.push(...items);
         await this.fetchFavoriteStates(items);
+        // Hint the browser to start fetching the first few images in parallel
+        // with layout work, before the <img> elements are even appended.
+        // Without this, loading="lazy" defers fetches until the cards hit
+        // the viewport, costing ~100-300ms on the first paint of the feed.
+        if (this.page === 1) this.preloadAboveFoldImages(items);
         this.renderItems(items);
         this.page++;
       }
@@ -250,6 +273,39 @@ const gallery = {
     });
   },
 
+  // Hint the browser to start fetching the above-the-fold images in parallel
+  // with HTML/CSS/layout work, so they're ready by the time the cards are
+  // rendered. Only the first batch triggers preloads (later batches use the
+  // browser's native lazy-load). Each preload is tagged with imagesrcset +
+  // imagesizes so the browser picks the correct variant immediately instead
+  // of re-resolving once the <img> element is parsed.
+  preloadAboveFoldImages(items) {
+    const PRELOAD_COUNT = 6;
+    const head = document.head;
+    const top = items.slice(0, PRELOAD_COUNT);
+    for (const item of top) {
+      const url = item.thumbnail_url || item.display_url || item.url;
+      if (!url) continue;
+      const link = document.createElement('link');
+      link.rel = 'preload';
+      link.as = 'image';
+      link.href = url;
+      if (item.display_url) {
+        const stripQuery = (u) => u.split('?')[0];
+        const thumbBase = stripQuery(item.thumbnail_url || item.display_url);
+        const displayBase = stripQuery(item.display_url);
+        link.setAttribute('imagesrcset', [
+          `${thumbBase}?w=400 400w`,
+          `${displayBase}?w=800 800w`,
+          `${displayBase}?w=1200 1200w`,
+          `${displayBase}?w=1920 1920w`,
+        ].join(', '));
+        link.setAttribute('imagesizes', '(max-width: 600px) 50vw, (max-width: 1024px) 33vw, 20vw');
+      }
+      head.appendChild(link);
+    }
+  },
+
   createCard(item, index = 0) {
     const card = document.createElement('div');
     card.className = 'media-card skeleton';
@@ -266,13 +322,22 @@ const gallery = {
       // items missing a display_url fall back to the thumbnail too.
       mediaEl.src = item.thumbnail_url || item.url;
     } else {
-      // Photos: let the browser pick between thumb and display based on
-      // viewport + DPR via srcset/sizes. One image load, no upgrade swap,
-      // no flicker. Bandwidth-friendly on low-DPR (picks 400w thumb),
-      // high-quality on high-DPR (picks 1920w display).
-      const thumbUrl = item.thumbnail_url || item.display_url;
-      mediaEl.src = item.display_url;
-      mediaEl.srcset = `${thumbUrl} 400w, ${item.display_url} 1920w`;
+      // Photos: multi-step srcset + sizes so the browser picks the smallest
+      // variant that still covers (viewport width x DPR). The proxy serves
+      // /media/{type}/{id}?w=NNN with server-side sharp resize + per-variant
+      // cache, so a 50vw card on a 1x display loads ~400w (~30 KB) instead
+      // of the full 1920w display (~200 KB). High-DPR phones still get a
+      // crisp 800-1200w variant via sizes x DPR.
+      const stripQuery = (url) => url.split('?')[0];
+      const thumbBase = stripQuery(item.thumbnail_url || item.display_url);
+      const displayBase = stripQuery(item.display_url);
+      mediaEl.src = `${displayBase}?w=1200`;
+      mediaEl.srcset = [
+        `${thumbBase}?w=400 400w`,
+        `${displayBase}?w=800 800w`,
+        `${displayBase}?w=1200 1200w`,
+        `${displayBase}?w=1920 1920w`,
+      ].join(', ');
       mediaEl.sizes = '(max-width: 600px) 50vw, (max-width: 1024px) 33vw, 20vw';
     }
     mediaEl.loading = 'lazy';
@@ -515,7 +580,10 @@ const gallery = {
 
     editBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      const item = this.media.find(m => m.id == this.currentModalId);
+      // Use the cached item reference rather than re-searching by id — see
+      // _currentModalItem. For duplicates in this.media, find() returns the
+      // first match, which may not be the record actually shown in the modal.
+      const item = this._currentModalItem;
       if (!item) return;
       editPanel.hidden = false;
       this.resetIdleTimer(editPanel.closest('.modal'));
@@ -564,8 +632,9 @@ const gallery = {
     });
 
     saveBtn.addEventListener('click', async () => {
-      const id = this.currentModalId;
-      if (!id) return;
+      const item = this._currentModalItem;
+      if (!item) return;
+      const id = item.id;
       const updates = {
         category_id: catSelect.value || null,
         subcategory_id: subSelect.value || null,
@@ -575,7 +644,6 @@ const gallery = {
       saveBtn.textContent = 'Сохранение...';
       try {
         await api.put('/api/media/batch-update', { ids: [id], ...updates });
-        const item = this.media.find(m => m.id == id);
         if (item) {
           item.category_id = updates.category_id;
           item.subcategory_id = updates.subcategory_id;
@@ -601,10 +669,9 @@ const gallery = {
     if (deleteBtn) {
       deleteBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        const id = this.currentModalId;
-        if (!id) return;
-        const item = this.media.find(m => m.id == id);
+        const item = this._currentModalItem;
         if (!item) return;
+        const id = item.id;
 
         const ok = await showConfirm(
           'Удалить это медиа? Файл будет удалён из S3 без возможности восстановления.',
@@ -638,30 +705,102 @@ const gallery = {
     }
   },
 
-  currentModalId: null,
-
   openModal(id) {
     const modal = document.getElementById('mediaModal');
     const container = document.getElementById('modalMediaContainer');
     const ageEl = document.getElementById('modalAge');
     const favoriteBtn = document.getElementById('modalFavorite');
 
-    this.scrollPosition = window.scrollY;
+    // Only capture the underlying scroll position on the FIRST open. If
+    // we re-captured every time, navigating prev/next in the modal (which
+    // also calls openModal) would overwrite the saved position with
+    // window.scrollY from inside the modal - on iOS Safari that resets
+    // to 0 when body.overflow=hidden kicks in, so closing the modal
+    // would jump the page back to the top instead of restoring the
+    // scroll position the user was at when they clicked the card.
+    if (this.scrollPosition === undefined || this.scrollPosition === null) {
+      this.scrollPosition = window.scrollY;
+    }
 
     const item = this.media.find(m => m.id == id);
     if (!item) return;
 
     this.currentModalId = id;
+    this._currentModalIndex = this.media.indexOf(item);
+    this._currentModalItem = item;
     container.innerHTML = '';
 
     const isVideo = item.type === 'video';
+
+    // Wrapper div holds the blur-up background, spinner, and media element.
+    // For videos, no blur-up is needed (the browser shows its own loading UI).
+    const wrapper = document.createElement('div');
+    wrapper.className = 'modal-media-wrapper';
+    if (!isVideo) {
+      // Use display_url (the high-res version) with w=64 - sharp will
+      // downsample a large JPEG to 64px, producing a tiny ~1-2KB image
+      // that looks great when CSS-blurred. Using the thumbnail itself
+      // would upscale/pixelate.
+      const blurSrc = (item.display_url || item.url || '').split('?')[0];
+      if (blurSrc) {
+        const blur = document.createElement('div');
+        blur.className = 'modal-media-blur';
+        blur.style.backgroundImage = `url("${blurSrc}?w=64")`;
+        // If the blur request fails (network, 404), don't leave an empty
+        // placeholder - the .modal-media-blur element just stays invisible.
+        blur.addEventListener('error', () => { blur.remove(); }, { once: true });
+        wrapper.appendChild(blur);
+      }
+
+      const spinner = document.createElement('div');
+      spinner.className = 'modal-media-spinner';
+      spinner.innerHTML = '<div class="spinner"></div>';
+      wrapper.appendChild(spinner);
+    }
+
     const mediaEl = document.createElement(isVideo ? 'video' : 'img');
     const displaySrc = isVideo ? item.url : (item.display_url || item.url);
     mediaEl.src = displaySrc;
     mediaEl.controls = isVideo;
     mediaEl.className = 'modal-media';
+    if (!isVideo) {
+      // Image starts hidden until decoded/loaded, then fades in over the blur.
+      mediaEl.classList.add('modal-media-loading');
+    }
     mediaEl.setAttribute('aria-label', isVideo ? 'Видео' : 'Изображение');
     mediaEl.alt = isVideo ? 'Видео' : `Изображение, возраст ${item.age_rating !== null ? item.age_rating + ' лет' : 'не указан'}`;
+
+    if (!isVideo) {
+      const revealImage = () => {
+        mediaEl.classList.remove('modal-media-loading');
+        mediaEl.classList.add('modal-media-ready');
+        // Put .modal-media-ready on the WRAPPER too so the spinner and
+        // blur fade out simultaneously with the image fade-in (CSS
+        // selectors target .modal-media-wrapper.modal-media-ready .*).
+        wrapper.classList.add('modal-media-ready');
+        // Tear down the spinner/blur DOM nodes after the CSS transitions
+        // finish (350ms matches .modal-media-ready's transition). Keeping
+        // them around longer would just waste layout work.
+        setTimeout(() => {
+          const b = wrapper.querySelector('.modal-media-blur');
+          const s = wrapper.querySelector('.modal-media-spinner');
+          if (b) b.remove();
+          if (s) s.remove();
+        }, 350);
+      };
+      mediaEl.addEventListener('load', revealImage, { once: true });
+      // If the image fails to load (404, network error), reveal the blur
+      // background so the user at least sees *something* instead of a
+      // permanently empty modal. Strip the spinner immediately so the
+      // user doesn't think we're still trying.
+      mediaEl.addEventListener('error', () => {
+        mediaEl.classList.remove('modal-media-loading');
+        mediaEl.classList.add('modal-media-ready');
+        wrapper.classList.add('modal-media-ready');
+        const spinner = wrapper.querySelector('.modal-media-spinner');
+        if (spinner) spinner.remove();
+      }, { once: true });
+    }
 
     if (isVideo) {
       mediaEl.autoplay = true;
@@ -699,6 +838,43 @@ const gallery = {
       mediaEl.style.cursor = 'zoom-in';
       mediaEl.style.transition = 'transform 0.3s ease';
 
+      // Swipe-down to close the modal (mobile-only gesture). Tracks
+      // vertical drag on the image element. Only triggers when the image
+      // is not zoomed and not currently being pinched - otherwise the
+      // existing pinch/pan logic owns the gesture.
+      const swipe = {
+        startY: 0,
+        startX: 0,
+        active: false,
+        // True once the gesture is committed to a downward swipe (vertical
+        // motion exceeded the slant threshold). Used to decide whether to
+        // snap back vs. animate the wrapper down with the finger.
+        committed: false,
+        dy: 0,
+        // If we translate the wrapper, we want a smooth transition back to
+        // 0 when the user releases below the threshold. We capture the
+        // current transition state so we can disable it during the drag
+        // and restore it on release.
+        originalTransition: '',
+      };
+      const SWIPE_THRESHOLD = 100;
+      const SWIPE_SLANT = 1.5; // |dy/dx| must exceed this to count as vertical
+
+      const applySwipeTransform = (px) => {
+        // Dim the modal slightly as the user pulls down, mirroring iOS.
+        const opacity = Math.max(0, 1 - px / 400);
+        wrapper.style.transform = `translateY(${px}px)`;
+        wrapper.style.opacity = opacity;
+        wrapper.style.transition = 'none';
+      };
+      const resetSwipeTransform = () => {
+        // Restore identity, then clear the inline transition so future
+        // stylesheets can take over (the snap-back animation is set
+        // BEFORE calling this).
+        wrapper.style.transform = '';
+        wrapper.style.opacity = '';
+      };
+
       mediaEl.addEventListener('mousedown', (e) => {
         zoom.hasDragged = false;
         if (zoom.scale === 1) return;
@@ -719,9 +895,25 @@ const gallery = {
           zoom.pinchStartScale = zoom.scale;
           zoom.pinchCenter = center2(e.touches[0], e.touches[1]);
           zoom.el.style.transition = 'none';
+          // Cancel any in-progress swipe-down: user is pinching now.
+          swipe.active = false;
+          swipe.committed = false;
         } else if (e.touches.length === 1) {
           zoom.hasDragged = false;
-          if (zoom.scale === 1) return;
+          if (zoom.scale === 1) {
+            // Potentially a swipe-down to close. We don't commit until the
+            // finger moves far enough vertically to be unambiguous.
+            swipe.startY = e.touches[0].clientY;
+            swipe.startX = e.touches[0].clientX;
+            swipe.active = true;
+            swipe.committed = false;
+            swipe.dy = 0;
+            swipe.originalTransition = mediaEl.style.transition;
+            return;
+          }
+          // Zoomed in: pan the image
+          swipe.active = false;
+          swipe.committed = false;
           zoom.isDragging = true;
           zoom.dragStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
           zoom.dragImageStart = { x: zoom.x, y: zoom.y };
@@ -730,35 +922,55 @@ const gallery = {
       }, { passive: true });
 
       mediaEl.addEventListener('touchmove', (e) => {
-        if (!zoom.isPinching || e.touches.length !== 2) return;
-        e.preventDefault();
-        const newDist = dist2(e.touches[0], e.touches[1]);
-        const newCenter = center2(e.touches[0], e.touches[1]);
-        const ratio = newDist / zoom.pinchStartDist;
-        const newScale = Math.max(1, Math.min(zoom.MAX_SCALE, zoom.pinchStartScale * ratio));
+        if (zoom.isPinching && e.touches.length === 2) {
+          e.preventDefault();
+          const newDist = dist2(e.touches[0], e.touches[1]);
+          const newCenter = center2(e.touches[0], e.touches[1]);
+          const ratio = newDist / zoom.pinchStartDist;
+          const newScale = Math.max(1, Math.min(zoom.MAX_SCALE, zoom.pinchStartScale * ratio));
 
-        // Keep pinch center stable: shift pan so the midpoint of the image stays under the fingers
-        const scaleChange = newScale / zoom.scale;
-        const cx = zoom.pinchCenter.x;
-        const cy = zoom.pinchCenter.y;
-        const rect = zoom.el.getBoundingClientRect();
-        const cxRel = cx - (rect.left + rect.width / 2);
-        const cyRel = cy - (rect.top + rect.height / 2);
-        zoom.x = cxRel - (cxRel - zoom.x) * scaleChange + (newCenter.x - cx);
-        zoom.y = cyRel - (cyRel - zoom.y) * scaleChange + (newCenter.y - cy);
-        zoom.scale = newScale;
-        zoom.pinchCenter = newCenter;
+          // Keep pinch center stable: shift pan so the midpoint of the image stays under the fingers
+          const scaleChange = newScale / zoom.scale;
+          const cx = zoom.pinchCenter.x;
+          const cy = zoom.pinchCenter.y;
+          const rect = zoom.el.getBoundingClientRect();
+          const cxRel = cx - (rect.left + rect.width / 2);
+          const cyRel = cy - (rect.top + rect.height / 2);
+          zoom.x = cxRel - (cxRel - zoom.x) * scaleChange + (newCenter.x - cx);
+          zoom.y = cyRel - (cyRel - zoom.y) * scaleChange + (newCenter.y - cy);
+          zoom.scale = newScale;
+          zoom.pinchCenter = newCenter;
 
-        if (zoom.scale <= 1.01) {
-          zoom.scale = 1;
-          zoom.x = 0;
-          zoom.y = 0;
-          zoom.el.style.cursor = 'zoom-in';
-        } else {
-          zoom.el.style.cursor = 'grab';
-          clampPan();
+          if (zoom.scale <= 1.01) {
+            zoom.scale = 1;
+            zoom.x = 0;
+            zoom.y = 0;
+            zoom.el.style.cursor = 'zoom-in';
+          } else {
+            zoom.el.style.cursor = 'grab';
+            clampPan();
+          }
+          applyTransform();
+          return;
         }
-        applyTransform();
+
+        // Swipe-down to close (single finger, unzoomed). Only commits if
+        // the user has moved enough downward AND the motion is dominantly
+        // vertical (so a casual horizontal drag doesn't trigger it).
+        if (swipe.active && e.touches.length === 1 && zoom.scale === 1) {
+          const touch = e.touches[0];
+          const dy = touch.clientY - swipe.startY;
+          const dx = Math.abs(touch.clientX - swipe.startX);
+          if (!swipe.committed && dy > 10 && (dx === 0 || Math.abs(dy) / dx > SWIPE_SLANT)) {
+            swipe.committed = true;
+          }
+          if (swipe.committed && dy > 0) {
+            e.preventDefault();
+            // Resistive pull so the wrapper feels rubbery past the threshold.
+            applySwipeTransform(dy * 0.6);
+            swipe.dy = dy * 0.6;
+          }
+        }
       }, { passive: false });
 
       const endTouches = (e) => {
@@ -777,13 +989,37 @@ const gallery = {
           zoom.isDragging = false;
           zoom.el.style.transition = '';
         }
+        // Swipe-down: commit or snap back.
+        if (swipe.active && swipe.committed && e.touches.length === 0) {
+          if (swipe.dy >= SWIPE_THRESHOLD * 0.6) {
+            // Past threshold: animate the wrapper off-screen, then close.
+            const finalY = window.innerHeight;
+            wrapper.style.transition = 'transform 0.25s ease, opacity 0.25s ease';
+            wrapper.style.transform = `translateY(${finalY}px)`;
+            wrapper.style.opacity = '0';
+            setTimeout(() => this.closeModal(), 220);
+          } else {
+            // Below threshold: snap back to identity.
+            wrapper.style.transition = 'transform 0.25s ease, opacity 0.25s ease';
+            resetSwipeTransform();
+          }
+          swipe.active = false;
+          swipe.committed = false;
+          swipe.dy = 0;
+        }
+        // Always reset swipe state when the last finger lifts, even if not
+        // committed (e.g. user tapped without moving).
+        if (e.touches.length === 0) {
+          swipe.active = false;
+          swipe.committed = false;
+        }
       };
       mediaEl.addEventListener('touchend', endTouches);
       mediaEl.addEventListener('touchcancel', endTouches);
 
       mediaEl.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (zoom.hasDragged || zoom.isPinching) return;
+        if (zoom.hasDragged || zoom.isPinching || swipe.committed) return;
         if (zoom.scale === 1) {
           const rect = mediaEl.getBoundingClientRect();
           const cx = e.clientX - rect.left;
@@ -807,7 +1043,8 @@ const gallery = {
       this.zoom = zoom;
     }
 
-    container.appendChild(mediaEl);
+    wrapper.appendChild(mediaEl);
+    container.appendChild(wrapper);
 
     ageEl.textContent = item.age_rating !== null ? (item.age_rating >= 19 ? `${item.age_rating}+` : `${item.age_rating}`) : '';
     ageEl.style.display = item.age_rating !== null ? 'inline-block' : 'none';
@@ -824,6 +1061,7 @@ const gallery = {
     modal.classList.add('active');
     modal.setAttribute('aria-hidden', 'false');
     document.body.style.overflow = 'hidden';
+    document.body.classList.add('modal-open');
     this.resetIdleTimer(modal);
     this.setupFocusTrap(modal);
     const closeBtn = document.getElementById('modalClose');
@@ -836,6 +1074,7 @@ const gallery = {
     modal.classList.remove('active', 'idle');
     modal.setAttribute('aria-hidden', 'true');
     document.body.style.overflow = '';
+    document.body.classList.remove('modal-open');
 
     const editPanel = document.getElementById('modalEditPanel');
     if (editPanel) editPanel.hidden = true;
@@ -851,6 +1090,9 @@ const gallery = {
 
     if (this.scrollPosition !== undefined) {
       window.scrollTo(0, this.scrollPosition);
+      // Clear so the next openModal call captures a fresh position
+      // (otherwise re-opening without navigating would skip the capture).
+      this.scrollPosition = null;
     }
 
     if (this.idleTimer) {
@@ -859,6 +1101,8 @@ const gallery = {
     }
 
     this.currentModalId = null;
+    this._currentModalIndex = -1;
+    this._currentModalItem = null;
     this.zoom = null;
     this.removeFocusTrap();
   },
@@ -889,9 +1133,111 @@ const gallery = {
     }
   },
 
+  // Floating "back to top" button. Hidden until the user has scrolled past
+  // ~600px, then fades in. Uses scroll listener with requestAnimationFrame
+  // throttling so it doesn't fire on every scroll event.
+  setupBackToTop() {
+    const btn = document.getElementById('backToTop');
+    if (!btn) return;
+    const THRESHOLD = 600;
+    let ticking = false;
+
+    const update = () => {
+      btn.classList.toggle('visible', window.scrollY > THRESHOLD);
+      ticking = false;
+    };
+
+    window.addEventListener('scroll', () => {
+      if (!ticking) {
+        requestAnimationFrame(update);
+        ticking = true;
+      }
+    }, { passive: true });
+
+    btn.addEventListener('click', () => {
+      const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      window.scrollTo({ top: 0, behavior: prefersReducedMotion ? 'auto' : 'smooth' });
+    });
+
+    // Re-render lucide icon now that the button is in the DOM
+    if (window.lucide) window.lucide.createIcons();
+  },
+
+  // Pull-to-refresh for touch devices. Only triggers when the page is
+  // already scrolled to the top - otherwise we'd interfere with normal
+  // scrolling. The visual indicator grows in height as the user pulls
+  // down; releasing past the threshold reloads the page.
+  setupPullToRefresh() {
+    const indicator = document.getElementById('pullToRefresh');
+    if (!indicator) return;
+
+    // Skip on desktop browsers (they don't fire touch events).
+    if (!('ontouchstart' in window) && !navigator.maxTouchPoints) return;
+
+    const THRESHOLD = 80;
+    const MAX_PULL = 140;
+    let startY = 0;
+    let active = false;
+    let pulling = false;
+
+    const setHeight = (px) => {
+      indicator.style.height = `${Math.min(px, MAX_PULL)}px`;
+    };
+
+    document.addEventListener('touchstart', (e) => {
+      if (window.scrollY > 0) return;
+      // Only single-finger gestures - pinch-zoom should still work.
+      if (e.touches.length !== 1) return;
+      startY = e.touches[0].clientY;
+      active = true;
+      pulling = false;
+    }, { passive: true });
+
+    document.addEventListener('touchmove', (e) => {
+      if (!active) return;
+      if (window.scrollY > 0) {
+        active = false;
+        setHeight(0);
+        return;
+      }
+      const dy = e.touches[0].clientY - startY;
+      if (dy <= 0) {
+        setHeight(0);
+        pulling = false;
+        return;
+      }
+      // Only intercept scrolling once we're committed to a pull.
+      if (dy > 10) {
+        pulling = true;
+        // Resist further than MAX_PULL so the indicator feels rubbery.
+        setHeight(dy * 0.5);
+      }
+    }, { passive: true });
+
+    document.addEventListener('touchend', () => {
+      if (!active) return;
+      const currentHeight = parseInt(indicator.style.height, 10) || 0;
+      active = false;
+      pulling = false;
+      if (currentHeight >= THRESHOLD) {
+        indicator.classList.add('refreshing');
+        setHeight(60);
+        // Small delay so the user sees the spinner before the page
+        // navigation interrupts the JS event loop.
+        setTimeout(() => window.location.reload(), 300);
+      } else {
+        setHeight(0);
+      }
+    });
+  },
+
   async navigateModal(direction) {
     if (!this.currentModalId) return;
-    const currentIndex = this.media.findIndex(m => m.id == this.currentModalId);
+    // Use the cached index from openModal instead of findIndex. findIndex
+    // returns the first match for an id, so duplicates (same id in two slots)
+    // would trap the user on a phantom "next" press — see _currentModalIndex.
+    const currentIndex = this._currentModalIndex;
+    if (currentIndex < 0) return;
     const newIndex = currentIndex + direction;
 
     if (newIndex < 0) return;

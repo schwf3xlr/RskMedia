@@ -116,18 +116,28 @@ const MediaModel = {
   },
 
   async update(id, updates) {
+    // Whitelist: even though we camelCase→snake_case the keys, an attacker who
+    // could control the input could still inject arbitrary SQL via a key like
+    // "id=1; DROP TABLE media; --" (the lowercase transform doesn't sanitize).
+    // Locking down the field list also protects against typos silently writing
+    // to the wrong column.
+    const ALLOWED_MEDIA_FIELDS = [
+      'category_id', 'subcategory_id', 'age_rating',
+      's3_key', 'thumbnail_s3_key', 'display_s3_key', 'phash',
+    ];
     const fields = [];
     const values = [];
     let idx = 1;
 
     for (const [key, value] of Object.entries(updates)) {
-      if (value !== undefined) {
-        const dbField = key.replace(/([A-Z])/g, '_$1').toLowerCase();
-        fields.push(`${dbField} = $${idx}`);
-        values.push(value);
-        idx++;
-      }
+      if (value === undefined) continue;
+      const dbField = key.replace(/([A-Z])/g, '_$1').toLowerCase();
+      if (!ALLOWED_MEDIA_FIELDS.includes(dbField)) continue;
+      fields.push(`${dbField} = $${idx}`);
+      values.push(value);
+      idx++;
     }
+    if (fields.length === 0) return await this.getById(id);
     values.push(id);
 
     const result = await db.query(

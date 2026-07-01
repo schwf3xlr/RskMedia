@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const UserModel = require('../models/user');
 const { setAuthCookie, clearAuthCookie, JWT_SECRET, JWT_EXPIRES } = require('../middleware/auth');
 
@@ -22,9 +22,15 @@ const AuthController = {
     };
 
     const jwtToken = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: JWT_EXPIRES });
-
-    // Store a hash of the JWT in DB for server-side invalidation
-    const jwtHash = await bcrypt.hash(jwtToken, 10);
+    // Use SHA256 for the JWT lookup hash instead of bcrypt. The hash's only
+    // purpose is to let the auth middleware verify the cookie matches what
+    // we issued on login — it doesn't need to be slow. Using bcrypt here
+    // (a) adds ~100ms of CPU to every login and (b) creates a race where
+    // two concurrent logins for the same token can produce two valid JWTs
+    // but only one valid hash; the other login's JWT silently stops working.
+    // SHA256 is collision-resistant and the JWT itself is already
+    // tamper-proof via its signature, so this hash only needs to be unique.
+    const jwtHash = crypto.createHash('sha256').update(jwtToken).digest('hex');
     await UserModel.updateJwtHash(user.id, jwtHash);
 
     setAuthCookie(res, jwtToken);

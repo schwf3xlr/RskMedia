@@ -409,6 +409,13 @@
   border-color: var(--border-hover);
   background: var(--bg-3);
 }
+/* Fade-out applied right before the queue is cleared after batch upload
+   completes - gives a soft exit instead of an abrupt disappearance. */
+.queue-item-removing {
+  opacity: 0;
+  transform: translateX(20px);
+  transition: opacity 0.4s ease, transform 0.4s ease;
+}
 
 .queue-item .queue-icon {
   width: 36px;
