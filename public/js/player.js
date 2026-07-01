@@ -71,17 +71,13 @@ const gallery = {
           return;
         }
 
+        // Preload the high-res version in the browser cache, then swap src
+        // directly. Because the image is already cached, the src change
+        // paints instantly - no opacity flicker, no 300ms fade dance.
         const upgrade = new Image();
         upgrade.onload = () => {
-          // Fade out current, swap src, fade back in — smooth transition
-          card.classList.add('swapping');
-          setTimeout(() => {
-            mediaEl.src = fullSrc;
-            card.dataset.upgraded = '1';
-            requestAnimationFrame(() => {
-              card.classList.remove('swapping', 'skeleton');
-            });
-          }, 310);
+          mediaEl.src = fullSrc;
+          card.dataset.upgraded = '1';
         };
         upgrade.onerror = () => {
           card.classList.remove('skeleton');

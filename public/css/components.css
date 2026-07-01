@@ -124,10 +124,6 @@
   opacity: 0;
 }
 
-.media-card.swapping img {
-  opacity: 0;
-}
-
 .media-card img {
   transition: opacity 0.3s ease;
   position: relative;
