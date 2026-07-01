@@ -1,7 +1,7 @@
 const db = require('../config/database');
 const { SORT_MAP } = require('../config/constants');
 
-function buildWhere({ categoryId, subcategoryId, age, params, idx = 2 }) {
+function buildWhere({ categoryId, subcategoryId, age, type, params, idx = 2 }) {
   let query = '';
   if (categoryId) {
     query += ` AND m.category_id = $${idx++}`;
@@ -18,17 +18,21 @@ function buildWhere({ categoryId, subcategoryId, age, params, idx = 2 }) {
     query += ` AND m.age_rating = $${idx++}`;
     params.push(age);
   }
+  if (type === 'photo' || type === 'video') {
+    query += ` AND m.type = $${idx++}`;
+    params.push(type);
+  }
   return { query, idx };
 }
 
 const FavoritesModel = {
-  async getByTokenId(tokenId, { categoryId, subcategoryId, age, sort, limit = 20, offset = 0 }) {
-    return this.getByTokenIdWithCount(tokenId, { categoryId, subcategoryId, age, sort, limit, offset });
+  async getByTokenId(tokenId, { categoryId, subcategoryId, age, type, sort, limit = 20, offset = 0 }) {
+    return this.getByTokenIdWithCount(tokenId, { categoryId, subcategoryId, age, type, sort, limit, offset });
   },
 
-  async getByTokenIdWithCount(tokenId, { categoryId, subcategoryId, age, sort, limit = 20, offset = 0 }) {
+  async getByTokenIdWithCount(tokenId, { categoryId, subcategoryId, age, type, sort, limit = 20, offset = 0 }) {
     const params = [tokenId];
-    const where = buildWhere({ categoryId, subcategoryId, age, params });
+    const where = buildWhere({ categoryId, subcategoryId, age, type, params });
     const whereClause = where.query;
     let idx = where.idx;
 
@@ -49,9 +53,9 @@ const FavoritesModel = {
     return result.rows;
   },
 
-  async getTotalCount(tokenId, { categoryId, subcategoryId, age }) {
+  async getTotalCount(tokenId, { categoryId, subcategoryId, age, type }) {
     const params = [tokenId];
-    const { query: whereClause } = buildWhere({ categoryId, subcategoryId, age, params });
+    const { query: whereClause } = buildWhere({ categoryId, subcategoryId, age, type, params });
 
     const query = `
       SELECT COUNT(*)

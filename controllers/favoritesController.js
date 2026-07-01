@@ -1,11 +1,20 @@
 const FavoritesModel = require('../models/favorites');
 const { getSignedUrlForKey } = require('../config/s3');
-const { SIGN_URL_EXPIRES } = require('../config/constants');
+const { SIGN_URL_EXPIRES, TYPE_SORT_MAP } = require('../config/constants');
 
 const USE_PROXY = process.env.USE_MEDIA_PROXY !== 'false';
 
 function proxyUrl(req, type, id) {
   return `${req.protocol}://${req.get('host')}/media/${type}/${id}`;
+}
+
+// "Фото" / "Видео" sort options are type filters - translate to `type`
+// param + default sort (newest) for the filtered slice.
+function resolveSortAndType(sort) {
+  if (TYPE_SORT_MAP[sort]) {
+    return { type: TYPE_SORT_MAP[sort], sort: 'newest' };
+  }
+  return { type: undefined, sort };
 }
 
 async function enrichFavorites(favorites, req) {
@@ -39,12 +48,14 @@ const FavoritesController = {
   async getAll(req, res) {
     const { category_id, subcategory_id, age, sort, page = 1, limit = 20 } = req.query;
     const offset = (page - 1) * limit;
+    const { type, sort: effectiveSort } = resolveSortAndType(sort);
 
     const favorites = await FavoritesModel.getByTokenIdWithCount(req.user.token_id, {
       categoryId: category_id,
       subcategoryId: subcategory_id,
       age,
-      sort,
+      type,
+      sort: effectiveSort,
       limit: parseInt(limit),
       offset: parseInt(offset),
     });

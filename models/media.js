@@ -3,7 +3,7 @@ const { SORT_MAP } = require('../config/constants');
 
 const ALLOWED_FIELDS = ['category_id', 'subcategory_id', 'age_rating'];
 
-function buildWhere({ categoryId, subcategoryId, age, missingFields, query, params, idx = 1 }) {
+function buildWhere({ categoryId, subcategoryId, age, type, missingFields, query, params, idx = 1 }) {
   let queryStr = ' WHERE 1=1';
 
   if (categoryId) {
@@ -20,6 +20,10 @@ function buildWhere({ categoryId, subcategoryId, age, missingFields, query, para
   if (age !== undefined && age !== null && age !== '') {
     queryStr += ` AND m.age_rating = $${idx++}`;
     params.push(age);
+  }
+  if (type === 'photo' || type === 'video') {
+    queryStr += ` AND m.type = $${idx++}`;
+    params.push(type);
   }
   if (missingFields && Array.isArray(missingFields) && missingFields.length > 0) {
     for (const field of missingFields) {
@@ -38,14 +42,14 @@ function buildWhere({ categoryId, subcategoryId, age, missingFields, query, para
 }
 
 const MediaModel = {
-  async getAll({ categoryId, subcategoryId, age, missingFields, sort, limit = 20, offset = 0 }) {
-    return this.getAllWithCount({ categoryId, subcategoryId, age, missingFields, sort, limit, offset });
+  async getAll({ categoryId, subcategoryId, age, type, missingFields, sort, limit = 20, offset = 0 }) {
+    return this.getAllWithCount({ categoryId, subcategoryId, age, type, missingFields, sort, limit, offset });
   },
 
   // Single-query variant: returns rows with `total_count` from window function (no separate COUNT query)
-  async getAllWithCount({ categoryId, subcategoryId, age, missingFields, sort, limit = 20, offset = 0 }) {
+  async getAllWithCount({ categoryId, subcategoryId, age, type, missingFields, sort, limit = 20, offset = 0 }) {
     const params = [];
-    const where = buildWhere({ categoryId, subcategoryId, age, missingFields, params });
+    const where = buildWhere({ categoryId, subcategoryId, age, type, missingFields, params });
     const queryStr = where.queryStr;
     let idx = where.idx;
 
@@ -65,13 +69,13 @@ const MediaModel = {
     return result.rows;
   },
 
-  async search({ query, categoryId, subcategoryId, age, sort, limit = 20, offset = 0 }) {
-    return this.searchWithCount({ query, categoryId, subcategoryId, age, sort, limit, offset });
+  async search({ query, categoryId, subcategoryId, age, type, sort, limit = 20, offset = 0 }) {
+    return this.searchWithCount({ query, categoryId, subcategoryId, age, type, sort, limit, offset });
   },
 
-  async searchWithCount({ query, categoryId, subcategoryId, age, sort, limit = 20, offset = 0 }) {
+  async searchWithCount({ query, categoryId, subcategoryId, age, type, sort, limit = 20, offset = 0 }) {
     const params = [];
-    const where = buildWhere({ categoryId, subcategoryId, age, params, query });
+    const where = buildWhere({ categoryId, subcategoryId, age, type, params, query });
     const queryStr = where.queryStr;
     let idx = where.idx;
 
@@ -137,18 +141,18 @@ const MediaModel = {
     await db.query('DELETE FROM media WHERE id = $1', [id]);
   },
 
-  async getTotalCount({ categoryId, subcategoryId, age, missingFields }) {
+  async getTotalCount({ categoryId, subcategoryId, age, type, missingFields }) {
     const params = [];
-    const { queryStr } = buildWhere({ categoryId, subcategoryId, age, missingFields, params });
+    const { queryStr } = buildWhere({ categoryId, subcategoryId, age, type, missingFields, params });
 
     const query = `SELECT COUNT(*) FROM media m ${queryStr}`;
     const result = await db.query(query, params);
     return parseInt(result.rows[0].count);
   },
 
-  async getSearchCount({ query, categoryId, subcategoryId, age }) {
+  async getSearchCount({ query, categoryId, subcategoryId, age, type }) {
     const params = [];
-    const { queryStr } = buildWhere({ categoryId, subcategoryId, age, params, query });
+    const { queryStr } = buildWhere({ categoryId, subcategoryId, age, type, params, query });
 
     const sql = `SELECT COUNT(*) FROM media m ${queryStr}`;
     const result = await db.query(sql, params);

@@ -10,10 +10,20 @@ const MediaModel = require('../models/media');
 const { deleteFromS3, getSignedUrlForKey, s3Client, bucket } = require('../config/s3');
 const { validateFileType } = require('../helpers/fileValidator');
 const { getExtensionFromMimeType } = require('../helpers/mime');
-const { SIGN_URL_EXPIRES } = require('../config/constants');
+const { SIGN_URL_EXPIRES, TYPE_SORT_MAP } = require('../config/constants');
 const db = require('../config/database');
 
 const UPLOAD_CONCURRENCY = 3;
+
+// "Фото" / "Видео" sort options in the dropdown are actually type filters -
+// translate them to a `type` query parameter and fall back to the default
+// (newest) sort for the filtered slice.
+function resolveSortAndType(sort) {
+  if (TYPE_SORT_MAP[sort]) {
+    return { type: TYPE_SORT_MAP[sort], sort: 'newest' };
+  }
+  return { type: undefined, sort };
+}
 
 // Tune sharp cache for media-heavy workload
 sharp.cache({ memory: 100, items: 200, files: 0 });
@@ -62,11 +72,13 @@ const MediaController = {
   async getAll(req, res) {
     const { category_id, subcategory_id, age, sort, page = 1, limit = 20 } = req.query;
     const offset = (page - 1) * limit;
+    const { type, sort: effectiveSort } = resolveSortAndType(sort);
     const media = await MediaModel.getAllWithCount({
       categoryId: category_id,
       subcategoryId: subcategory_id,
       age,
-      sort,
+      type,
+      sort: effectiveSort,
       limit: parseInt(limit),
       offset: parseInt(offset),
     });
@@ -78,12 +90,14 @@ const MediaController = {
   async search(req, res) {
     const { q, category_id, subcategory_id, age, sort, page = 1, limit = 20 } = req.query;
     const offset = (page - 1) * limit;
+    const { type, sort: effectiveSort } = resolveSortAndType(sort);
     const media = await MediaModel.searchWithCount({
       query: q,
       categoryId: category_id,
       subcategoryId: subcategory_id,
       age,
-      sort,
+      type,
+      sort: effectiveSort,
       limit: parseInt(limit),
       offset: parseInt(offset),
     });
