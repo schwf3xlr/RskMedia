@@ -46,10 +46,11 @@ const gallery = {
   zoom: null,
   favoriteCache: new Map(),
   focusTrap: null,
+  abortController: null,
 
   async init() {
-    await this.loadCategories();
-    await this.loadSubcategories();
+    // Categories + subcategories are independent — fetch in parallel
+    await Promise.all([this.loadCategories(), this.loadSubcategories()]);
     this.restoreFiltersFromURL();
     this.setupFilters();
     this.setupInfiniteScroll();
@@ -166,6 +167,8 @@ const gallery = {
     this.media = [];
     this.hasMore = true;
     this.favoriteCache.clear();
+    // Abort any in-flight loadMore so stale responses don't overwrite the new grid
+    if (this.abortController) this.abortController.abort();
     const grid = document.getElementById('mediaGrid');
     if (grid) grid.innerHTML = '';
   },
@@ -204,6 +207,8 @@ const gallery = {
   async loadMore() {
     if (this.loading || !this.hasMore) return;
     this.loading = true;
+    this.abortController = new AbortController();
+    const signal = this.abortController.signal;
     const spinner = document.getElementById('loadingSpinner');
     const emptyState = document.getElementById('emptyState');
     if (spinner) spinner.classList.remove('hidden');
@@ -216,7 +221,7 @@ const gallery = {
         limit: 20,
         ...this.filters,
       });
-      const response = await api.get(`${endpoint}?${params}`);
+      const response = await api.get(`${endpoint}?${params}`, { signal });
 
       const items = response.media || response;
 
@@ -243,8 +248,10 @@ const gallery = {
         this.page++;
       }
     } catch (err) {
-      console.error('Load error:', err);
-      toast.show('Ошибка загрузки', 'error');
+      if (err.name !== 'AbortError') {
+        console.error('Load error:', err);
+        toast.show('Ошибка загрузки', 'error');
+      }
     } finally {
       this.loading = false;
       if (spinner) spinner.classList.add('hidden');

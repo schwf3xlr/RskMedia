@@ -39,6 +39,11 @@ function buildWhere({ categoryId, subcategoryId, age, missingFields, query, para
 
 const MediaModel = {
   async getAll({ categoryId, subcategoryId, age, missingFields, sort, limit = 20, offset = 0 }) {
+    return this.getAllWithCount({ categoryId, subcategoryId, age, missingFields, sort, limit, offset });
+  },
+
+  // Single-query variant: returns rows with `total_count` from window function (no separate COUNT query)
+  async getAllWithCount({ categoryId, subcategoryId, age, missingFields, sort, limit = 20, offset = 0 }) {
     const params = [];
     const where = buildWhere({ categoryId, subcategoryId, age, missingFields, params });
     const queryStr = where.queryStr;
@@ -46,7 +51,8 @@ const MediaModel = {
 
     const order = SORT_MAP[sort] || 'm.uploaded_at DESC';
     const query = `
-      SELECT m.*, c.name as category_name, s.name as subcategory_name
+      SELECT m.*, c.name as category_name, s.name as subcategory_name,
+             COUNT(*) OVER() AS total_count
       FROM media m
       LEFT JOIN categories c ON m.category_id = c.id
       LEFT JOIN subcategories s ON m.subcategory_id = s.id
@@ -60,6 +66,10 @@ const MediaModel = {
   },
 
   async search({ query, categoryId, subcategoryId, age, sort, limit = 20, offset = 0 }) {
+    return this.searchWithCount({ query, categoryId, subcategoryId, age, sort, limit, offset });
+  },
+
+  async searchWithCount({ query, categoryId, subcategoryId, age, sort, limit = 20, offset = 0 }) {
     const params = [];
     const where = buildWhere({ categoryId, subcategoryId, age, params, query });
     const queryStr = where.queryStr;
@@ -67,7 +77,8 @@ const MediaModel = {
 
     const order = SORT_MAP[sort] || 'm.uploaded_at DESC';
     const sql = `
-      SELECT m.*, c.name as category_name, s.name as subcategory_name
+      SELECT m.*, c.name as category_name, s.name as subcategory_name,
+             COUNT(*) OVER() AS total_count
       FROM media m
       LEFT JOIN categories c ON m.category_id = c.id
       LEFT JOIN subcategories s ON m.subcategory_id = s.id

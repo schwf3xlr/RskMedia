@@ -53,15 +53,21 @@ CREATE TABLE IF NOT EXISTS favorites (
 );
 
 CREATE INDEX IF NOT EXISTS idx_media_uploaded_at ON media(uploaded_at DESC);
+-- Composite index covers "ORDER BY uploaded_at DESC, id DESC" used by every list query
+CREATE INDEX IF NOT EXISTS idx_media_uploaded_id ON media(uploaded_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_media_category_id ON media(category_id);
 CREATE INDEX IF NOT EXISTS idx_media_subcategory_id ON media(subcategory_id);
 CREATE INDEX IF NOT EXISTS idx_media_age_rating ON media(age_rating);
 CREATE INDEX IF NOT EXISTS idx_media_type ON media(type);
-CREATE INDEX IF NOT EXISTS idx_media_phash ON media(phash) WHERE phash IS NOT NULL;
+-- For sort=name (ORDER BY m.s3_key ASC)
+CREATE INDEX IF NOT EXISTS idx_media_s3_key ON media(s3_key);
+-- Composite for common WHERE+ORDER combinations
+CREATE INDEX IF NOT EXISTS idx_media_subcategory_uploaded ON media(subcategory_id, uploaded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_media_age_uploaded ON media(age_rating, uploaded_at DESC);
 CREATE INDEX IF NOT EXISTS idx_media_category_age ON media(category_id, age_rating, uploaded_at DESC);
-CREATE INDEX IF NOT EXISTS idx_favorites_token_id ON favorites(token_id);
+CREATE INDEX IF NOT EXISTS idx_media_phash ON media(phash) WHERE phash IS NOT NULL;
+-- idx_favorites_token_id covered by UNIQUE(token_id, media_id) which already creates an index on (token_id, media_id)
 CREATE INDEX IF NOT EXISTS idx_favorites_media_id ON favorites(media_id);
-CREATE INDEX IF NOT EXISTS idx_favorites_token_media ON favorites(token_id, media_id);
 CREATE INDEX IF NOT EXISTS idx_subcategories_category_id ON subcategories(category_id);
 CREATE INDEX IF NOT EXISTS idx_tokens_type ON tokens(type);
 CREATE INDEX IF NOT EXISTS idx_tokens_active ON tokens(is_active);

@@ -1,6 +1,6 @@
 const auth = {
   token: null,
-  userType: window.RSK_USER_TYPE || null,
+  userType: (document.querySelector('meta[name="user-type"]')?.content) || null,
 
   getToken() {
     return this.token;
@@ -86,6 +86,22 @@ const api = {
     return response.json();
   },
 
+  get(url, options = {}) {
+    return this.request(url, { ...options, method: 'GET' });
+  },
+
+  post(url, body, options = {}) {
+    return this.request(url, { ...options, method: 'POST', body: JSON.stringify(body) });
+  },
+
+  put(url, body, options = {}) {
+    return this.request(url, { ...options, method: 'PUT', body: JSON.stringify(body) });
+  },
+
+  delete(url, options = {}) {
+    return this.request(url, { ...options, method: 'DELETE' });
+  },
+
   async requestForm(url, options = {}) {
     const meta = document.querySelector('meta[name="csrf-token"]');
     const token = meta ? meta.content : '';
@@ -164,28 +180,6 @@ const api = {
       xhr.send(formData);
     });
   },
-
-  get(url) {
-    return this.request(url);
-  },
-
-  post(url, body) {
-    return this.request(url, {
-      method: 'POST',
-      body: JSON.stringify(body),
-    });
-  },
-
-  put(url, body) {
-    return this.request(url, {
-      method: 'PUT',
-      body: JSON.stringify(body),
-    });
-  },
-
-  delete(url) {
-    return this.request(url, { method: 'DELETE' });
-  },
 };
 
 const toast = {
@@ -213,9 +207,24 @@ const toast = {
 
 const categories = {
   _subcategoriesCache: new Map(),
+  _listCache: null,
+
+  get list() {
+    return this._listCache || [];
+  },
 
   async loadAll() {
-    return api.get('/api/categories');
+    if (this._listCache) return this._listCache;
+    const promise = api.get('/api/categories');
+    this._listCache = promise;
+    promise.catch(() => { this._listCache = null; });
+    const result = await promise;
+    this._listCache = result;
+    return result;
+  },
+
+  invalidateList() {
+    this._listCache = null;
   },
 
   async loadSubcategories(categoryId) {

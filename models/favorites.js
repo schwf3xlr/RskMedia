@@ -23,6 +23,10 @@ function buildWhere({ categoryId, subcategoryId, age, params, idx = 2 }) {
 
 const FavoritesModel = {
   async getByTokenId(tokenId, { categoryId, subcategoryId, age, sort, limit = 20, offset = 0 }) {
+    return this.getByTokenIdWithCount(tokenId, { categoryId, subcategoryId, age, sort, limit, offset });
+  },
+
+  async getByTokenIdWithCount(tokenId, { categoryId, subcategoryId, age, sort, limit = 20, offset = 0 }) {
     const params = [tokenId];
     const where = buildWhere({ categoryId, subcategoryId, age, params });
     const whereClause = where.query;
@@ -30,7 +34,8 @@ const FavoritesModel = {
 
     const order = SORT_MAP[sort] || 'f.added_at DESC';
     const query = `
-      SELECT m.*, c.name as category_name, s.name as subcategory_name
+      SELECT m.*, c.name as category_name, s.name as subcategory_name,
+             COUNT(*) OVER() AS total_count
       FROM favorites f
       JOIN media m ON f.media_id = m.id
       LEFT JOIN categories c ON m.category_id = c.id

@@ -12,6 +12,7 @@ const { requireAdmin } = require('./middleware/admin');
 const { csrfProtection, csrfTokenMiddleware } = require('./middleware/csrf');
 const { nonceMiddleware } = require('./middleware/nonce');
 const { AGE_RATINGS } = require('./config/constants');
+const { apiLimiter } = require('./middleware/rateLimiter');
 
 dotenv.config();
 
@@ -73,7 +74,10 @@ app.use(compression({
     return compression.filter(req, res);
   },
 }));
-app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
+app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev', {
+  // Skip media/static — these floods logs and adds response-time tracking overhead
+  skip: (req) => req.path.startsWith('/media/') || req.path.startsWith('/css/') || req.path.startsWith('/js/'),
+}));
 
 // Body parsing
 app.use(express.json({ limit: '10mb' }));
@@ -84,9 +88,7 @@ app.use(express.static(path.join(__dirname, 'public'), {
   maxAge: process.env.NODE_ENV === 'production' ? '1d' : 0,
 }));
 
-// Media proxy — fallback only. Default is signed URLs (USE_MEDIA_PROXY !== 'true'),
-// which let the browser download directly from S3 for maximum speed.
-// Set USE_MEDIA_PROXY=true to force proxying (e.g. if S3 CORS isn't configured).
+// Media proxy — serves S3 media through local server (avoids CORS/firewall issues on phone)
 app.use('/media', require('./routes/mediaProxy'));
 
 // Unregister old service workers and prevent cross-origin fetch interception
@@ -120,9 +122,9 @@ app.set('views', path.join(__dirname, 'views'));
 
 // API Routes
 app.use('/api/auth', csrfProtection, require('./routes/auth'));
-app.use('/api/media', authenticateToken, csrfProtection, require('./routes/media'));
-app.use('/api/categories', authenticateToken, csrfProtection, require('./routes/categories'));
-app.use('/api/favorites', authenticateToken, csrfProtection, require('./routes/favorites'));
+app.use('/api/media', apiLimiter, authenticateToken, csrfProtection, require('./routes/media'));
+app.use('/api/categories', apiLimiter, authenticateToken, csrfProtection, require('./routes/categories'));
+app.use('/api/favorites', apiLimiter, authenticateToken, csrfProtection, require('./routes/favorites'));
 app.use('/api/admin', authenticateToken, requireAdmin, csrfProtection, require('./routes/admin'));
 
 // Page routes

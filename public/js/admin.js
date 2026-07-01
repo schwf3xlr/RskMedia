@@ -613,10 +613,10 @@ async function loadCategoriesPanel() {
   const tbody = document.getElementById('categoriesTableBody');
   if (!tbody) return;
 
-  const [cats, subs] = await Promise.all([
-    categories.loadAll(),
-    api.get('/api/categories/subcategories'),
-  ]);
+  // loadAdminCategories() already called categories.loadAll() and rendered the select.
+  // Reuse the cached list instead of fetching again.
+  const cats = categories.list;
+  const subs = await api.get('/api/categories/subcategories');
 
   tbody.innerHTML = '';
   if (cats.length === 0) {
@@ -656,6 +656,7 @@ async function loadCategoriesPanel() {
       if (!await showConfirm(`Удалить категорию "${cat.name}"?`)) return;
       try {
         await api.delete(`/api/categories/${cat.id}`);
+        categories.invalidateList();
         categories.invalidateSubcategories();
         toast.show('Категория удалена');
         await loadAdminCategories();
@@ -690,6 +691,7 @@ document.getElementById('createCategoryBtn')?.addEventListener('click', async ()
   if (!name) return;
   try {
     await api.post('/api/categories', { name });
+    categories.invalidateList();
     toast.show('Категория создана');
     input.value = '';
     await loadAdminCategories();

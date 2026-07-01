@@ -5,6 +5,7 @@ const UserModel = require('../models/user');
 const MediaModel = require('../models/media');
 const { getSignedUrlForKey, getObjectBuffer } = require('../config/s3');
 const { SIGN_URL_EXPIRES } = require('../config/constants');
+const { invalidateAuthCache } = require('../middleware/auth');
 const db = require('../config/database');
 
 const USE_PROXY = process.env.USE_MEDIA_PROXY !== 'false';
@@ -51,6 +52,7 @@ const AdminController = {
     if (expires_at !== undefined) updates.expires_at = expires_at || null;
 
     const token = await UserModel.updateToken(id, updates);
+    invalidateAuthCache();
     res.json(token);
   },
 
@@ -61,6 +63,7 @@ const AdminController = {
       return res.status(403).json({ error: 'Нельзя удалить текущий токен' });
     }
     await UserModel.deleteToken(tokenId);
+    invalidateAuthCache();
     res.json({ message: 'Токен удалён' });
   },
 
@@ -72,13 +75,13 @@ const AdminController = {
       ? missing.split(',').map(f => f.trim()).filter(f => ['category_id', 'subcategory_id', 'age_rating'].includes(f))
       : undefined;
 
-    const media = await MediaModel.getAll({
+    const media = await MediaModel.getAllWithCount({
       missingFields,
       limit: parseInt(limit),
       offset: parseInt(offset),
     });
 
-    const total = await MediaModel.getTotalCount({ missingFields });
+    const total = media.length > 0 ? parseInt(media[0].total_count, 10) : 0;
 
     const mediaWithUrls = await Promise.all(
       media.map(async (m) => {
@@ -93,15 +96,12 @@ const AdminController = {
           }
           return result;
         }
-        const result = {
-          ...m,
-          url: await getSignedUrlForKey(m.s3_key, SIGN_URL_EXPIRES),
-          thumbnail_url: await getSignedUrlForKey(m.thumbnail_s3_key, SIGN_URL_EXPIRES),
-        };
-        if (m.display_s3_key) {
-          result.display_url = await getSignedUrlForKey(m.display_s3_key, SIGN_URL_EXPIRES);
-        }
-        return result;
+        const [url, thumbnail_url, display_url] = await Promise.all([
+          getSignedUrlForKey(m.s3_key, SIGN_URL_EXPIRES),
+          getSignedUrlForKey(m.thumbnail_s3_key, SIGN_URL_EXPIRES),
+          m.display_s3_key ? getSignedUrlForKey(m.display_s3_key, SIGN_URL_EXPIRES) : null,
+        ]);
+        return { ...m, url, thumbnail_url, display_url };
       })
     );
 
@@ -364,24 +364,6 @@ const AdminController = {
 
   async findDuplicates(req, res) {
     try {
-      await db.query(`
-        DO $$ BEGIN
-          IF NOT EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_name = 'media' AND column_name = 'phash'
-          ) THEN
-            ALTER TABLE media ADD COLUMN phash NUMERIC(20, 0);
-          ELSE
-            IF EXISTS (
-              SELECT 1 FROM information_schema.columns
-              WHERE table_name = 'media' AND column_name = 'phash' AND data_type = 'bigint'
-            ) THEN
-              ALTER TABLE media ALTER COLUMN phash TYPE NUMERIC(20, 0);
-            END IF;
-          END IF;
-        END $$;
-      `);
-
       // If client supplied retry_ids, only re-hash those (otherwise process everything missing)
       const retryIds = Array.isArray(req.body?.retry_ids)
         ? req.body.retry_ids.filter(id => Number.isInteger(id) && id > 0)
@@ -389,6 +371,7 @@ const AdminController = {
 
       const HASH_CONCURRENCY = 10;
       const HASH_TIMEOUT_MS = 10000;
+      const MAX_GROUPS = 200; // cap to keep response small on large galleries
 
       const computeHashes = async (rows) => {
         const failed = [];
@@ -433,7 +416,7 @@ const AdminController = {
       }
 
       const allHashed = await db.query(
-        'SELECT id, type, s3_key, thumbnail_s3_key, age_rating, phash::TEXT AS phash_str FROM media WHERE phash IS NOT NULL ORDER BY uploaded_at DESC'
+        'SELECT id, type, s3_key, thumbnail_s3_key, age_rating, phash::TEXT AS phash_str FROM media WHERE phash IS NOT NULL ORDER BY uploaded_at DESC LIMIT 50000'
       );
 
       const threshold = 10;
@@ -458,6 +441,7 @@ const AdminController = {
       for (const bucketItems of buckets.values()) {
         if (bucketItems.length < 2) continue;
         for (let i = 0; i < bucketItems.length; i++) {
+          if (groups.length >= MAX_GROUPS) break;
           const item = bucketItems[i];
           if (visited.has(item.id)) continue;
           const group = [item];
@@ -474,25 +458,37 @@ const AdminController = {
             groups.push(group);
           }
         }
+        if (groups.length >= MAX_GROUPS) break;
       }
 
       const result = await Promise.all(
         groups.map(async (group) => {
           const items = await Promise.all(
-            group.map(async (item) => ({
-              id: item.id,
-              type: item.type,
-              age_rating: item.age_rating,
-              url: await getSignedUrlForKey(item.s3_key, SIGN_URL_EXPIRES),
-              thumbnail_url: await getSignedUrlForKey(item.thumbnail_s3_key, SIGN_URL_EXPIRES),
-            }))
+            group.map(async (item) => {
+              const [url, thumbnail_url] = await Promise.all([
+                getSignedUrlForKey(item.s3_key, SIGN_URL_EXPIRES),
+                getSignedUrlForKey(item.thumbnail_s3_key, SIGN_URL_EXPIRES),
+              ]);
+              return {
+                id: item.id,
+                type: item.type,
+                age_rating: item.age_rating,
+                url,
+                thumbnail_url,
+              };
+            })
           );
           return { items };
         })
       );
 
       const totalDuplicates = result.reduce((s, g) => s + g.items.length, 0);
-      res.json({ groups: result, totalDuplicates, failedIds });
+      res.json({
+        groups: result,
+        totalDuplicates,
+        failedIds,
+        truncated: groups.length >= MAX_GROUPS,
+      });
     } catch (err) {
       console.error('findDuplicates error:', err);
       res.status(500).json({ error: 'Ошибка поиска дубликатов' });

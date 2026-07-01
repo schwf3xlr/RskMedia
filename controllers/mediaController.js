@@ -2,13 +2,21 @@ const path = require('path');
 const sharp = require('sharp');
 const ffmpeg = require('fluent-ffmpeg');
 const fs = require('fs').promises;
+const fsSync = require('fs');
+const { createReadStream } = require('fs');
+const { Upload } = require('@aws-sdk/lib-storage');
 const { v4: uuidv4 } = require('uuid');
 const MediaModel = require('../models/media');
-const { uploadToS3, deleteFromS3, getSignedUrlForKey } = require('../config/s3');
+const { deleteFromS3, getSignedUrlForKey, s3Client, bucket } = require('../config/s3');
 const { validateFileType } = require('../helpers/fileValidator');
 const { getExtensionFromMimeType } = require('../helpers/mime');
 const { SIGN_URL_EXPIRES } = require('../config/constants');
 const db = require('../config/database');
+
+const UPLOAD_CONCURRENCY = 3;
+
+// Tune sharp cache for media-heavy workload
+sharp.cache({ memory: 100, items: 200, files: 0 });
 
 function proxyUrl(req, type, id) {
   return `${req.protocol}://${req.get('host')}/media/${type}/${id}`;
@@ -16,40 +24,45 @@ function proxyUrl(req, type, id) {
 
 const USE_PROXY = process.env.USE_MEDIA_PROXY !== 'false';
 
+function enrichProxyUrls(m, req) {
+  const result = {
+    ...m,
+    url: proxyUrl(req, 'original', m.id),
+    thumbnail_url: proxyUrl(req, 'thumb', m.id),
+  };
+  if (m.display_s3_key) {
+    result.display_url = proxyUrl(req, 'display', m.id);
+  }
+  return result;
+}
+
+async function enrichItemWithSignedUrls(m) {
+  const [url, thumbnail_url, display_url] = await Promise.all([
+    getSignedUrlForKey(m.s3_key, SIGN_URL_EXPIRES),
+    getSignedUrlForKey(m.thumbnail_s3_key, SIGN_URL_EXPIRES),
+    m.display_s3_key ? getSignedUrlForKey(m.display_s3_key, SIGN_URL_EXPIRES) : null,
+  ]);
+  return { ...m, url, thumbnail_url, display_url };
+}
+
 async function enrichMediaUrls(media, req) {
-  const mediaWithUrls = await Promise.all(
-    media.map(async (m) => {
-      if (USE_PROXY) {
-        const result = {
-          ...m,
-          url: proxyUrl(req, 'original', m.id),
-          thumbnail_url: proxyUrl(req, 'thumb', m.id),
-        };
-        if (m.display_s3_key) {
-          result.display_url = proxyUrl(req, 'display', m.id);
-        }
-        return result;
-      }
-      const result = {
-        ...m,
-        url: await getSignedUrlForKey(m.s3_key, SIGN_URL_EXPIRES),
-        thumbnail_url: await getSignedUrlForKey(m.thumbnail_s3_key, SIGN_URL_EXPIRES),
-      };
-      if (m.display_s3_key) {
-        result.display_url = await getSignedUrlForKey(m.display_s3_key, SIGN_URL_EXPIRES);
-      }
-      return result;
-    })
+  return Promise.all(
+    media.map(m => USE_PROXY
+      ? Promise.resolve(enrichProxyUrls(m, req))
+      : enrichItemWithSignedUrls(m))
   );
-  return mediaWithUrls;
+}
+
+async function getByIdUrls(media, req) {
+  if (USE_PROXY) return enrichProxyUrls(media, req);
+  return enrichItemWithSignedUrls(media);
 }
 
 const MediaController = {
   async getAll(req, res) {
     const { category_id, subcategory_id, age, sort, page = 1, limit = 20 } = req.query;
     const offset = (page - 1) * limit;
-
-    const media = await MediaModel.getAll({
+    const media = await MediaModel.getAllWithCount({
       categoryId: category_id,
       subcategoryId: subcategory_id,
       age,
@@ -57,23 +70,15 @@ const MediaController = {
       limit: parseInt(limit),
       offset: parseInt(offset),
     });
-
-    const total = await MediaModel.getTotalCount({
-      categoryId: category_id,
-      subcategoryId: subcategory_id,
-      age,
-    });
-
+    const total = media.length > 0 ? parseInt(media[0].total_count, 10) : 0;
     const mediaWithUrls = await enrichMediaUrls(media, req);
-
     res.json({ media: mediaWithUrls, total, page: parseInt(page), totalPages: Math.ceil(total / limit) });
   },
 
   async search(req, res) {
     const { q, category_id, subcategory_id, age, sort, page = 1, limit = 20 } = req.query;
     const offset = (page - 1) * limit;
-
-    const media = await MediaModel.search({
+    const media = await MediaModel.searchWithCount({
       query: q,
       categoryId: category_id,
       subcategoryId: subcategory_id,
@@ -82,16 +87,8 @@ const MediaController = {
       limit: parseInt(limit),
       offset: parseInt(offset),
     });
-
-    const total = await MediaModel.getSearchCount({
-      query: q,
-      categoryId: category_id,
-      subcategoryId: subcategory_id,
-      age,
-    });
-
+    const total = media.length > 0 ? parseInt(media[0].total_count, 10) : 0;
     const mediaWithUrls = await enrichMediaUrls(media, req);
-
     res.json({ media: mediaWithUrls, total, page: parseInt(page), totalPages: Math.ceil(total / limit) });
   },
 
@@ -99,98 +96,22 @@ const MediaController = {
     const { id } = req.params;
     const media = await MediaModel.getById(id);
     if (!media) return res.status(404).json({ error: 'Media not found' });
-
-    if (USE_PROXY) {
-      media.url = proxyUrl(req, 'original', media.id);
-      media.thumbnail_url = proxyUrl(req, 'thumb', media.id);
-      if (media.display_s3_key) {
-        media.display_url = proxyUrl(req, 'display', media.id);
-      }
-    } else {
-      media.url = await getSignedUrlForKey(media.s3_key, SIGN_URL_EXPIRES);
-      media.thumbnail_url = await getSignedUrlForKey(media.thumbnail_s3_key, SIGN_URL_EXPIRES);
-      if (media.display_s3_key) {
-        media.display_url = await getSignedUrlForKey(media.display_s3_key, SIGN_URL_EXPIRES);
-      }
-    }
-
-    res.json(media);
+    const enriched = await getByIdUrls(media, req);
+    res.json(enriched);
   },
 
   async uploadSingle(req, res) {
     const file = req.file;
     if (!file) return res.status(400).json({ error: 'No file uploaded' });
 
-    const MAX_PHOTO_SIZE = (parseInt(process.env.MAX_PHOTO_SIZE_MB, 10) || 50) * 1024 * 1024;
-    const MAX_VIDEO_SIZE = (parseInt(process.env.MAX_VIDEO_SIZE_MB, 10) || 500) * 1024 * 1024;
-
-    const tempPaths = [];
     try {
-      const buffer = await fs.readFile(file.path);
-      const isImage = file.mimetype.startsWith('image/');
-      const maxSize = isImage ? MAX_PHOTO_SIZE : MAX_VIDEO_SIZE;
-      if (buffer.length > maxSize) {
-        return res.status(400).json({ error: `Файл слишком большой. Максимум ${maxSize / 1024 / 1024} МБ` });
-      }
-      if (!validateFileType(buffer, file.mimetype)) {
-        return res.status(400).json({ error: 'Содержимое файла не соответствует его типу' });
-      }
-
-      const { category_id, subcategory_id, age_rating } = req.body;
-      const type = isImage ? 'photo' : 'video';
-      const ext = getExtensionFromMimeType(file.mimetype);
-      const mediaId = uuidv4();
-      const s3Key = `media/${mediaId}${ext}`;
-      const thumbnailKey = `thumbnails/${mediaId}_thumb.jpg`;
-      const displayKey = isImage ? `display/${mediaId}_display.jpg` : null;
-
-      await uploadToS3(s3Key, buffer, file.mimetype);
-
-      let thumbnailBuffer;
-      let displayBuffer = null;
-      if (type === 'photo') {
-        thumbnailBuffer = await sharp(buffer)
-          .resize(400, null, { withoutEnlargement: true })
-          .jpeg({ quality: 80 })
-          .toBuffer();
-        displayBuffer = await sharp(buffer)
-          .resize(1920, 1920, { fit: 'inside', withoutEnlargement: true })
-          .jpeg({ quality: 85 })
-          .toBuffer();
-      } else {
-        const tempPath = path.join(__dirname, '../uploads', `${mediaId}_temp${ext}`);
-        await fs.writeFile(tempPath, buffer);
-        tempPaths.push(tempPath);
-        thumbnailBuffer = await generateVideoThumbnail(tempPath);
-      }
-
-      await uploadToS3(thumbnailKey, thumbnailBuffer, 'image/jpeg');
-      if (displayBuffer && displayKey) {
-        await uploadToS3(displayKey, displayBuffer, 'image/jpeg');
-      }
-
-      const media = await MediaModel.create({
-        type,
-        s3Key,
-        thumbnailS3Key: thumbnailKey,
-        displayS3Key: displayKey,
-        fileSize: buffer.length,
-        categoryId: category_id || null,
-        subcategoryId: subcategory_id || null,
-        ageRating: age_rating || null,
-      });
-
-      media.url = await getSignedUrlForKey(media.s3_key, SIGN_URL_EXPIRES);
-      media.thumbnail_url = await getSignedUrlForKey(media.thumbnail_s3_key, SIGN_URL_EXPIRES);
-      media.display_url = displayKey ? await getSignedUrlForKey(media.display_s3_key, SIGN_URL_EXPIRES) : null;
-
-      res.status(201).json(media);
+      const result = await processFile(file, req.body);
+      res.status(201).json(result);
     } catch (err) {
       console.error('Upload error:', err);
-      res.status(500).json({ error: 'Upload failed' });
+      res.status(err.status || 500).json({ error: err.message || 'Upload failed' });
     } finally {
-      tempPaths.push(file.path);
-      await cleanupTempFiles(tempPaths);
+      await cleanupTempFiles([file.path]);
     }
   },
 
@@ -204,23 +125,25 @@ const MediaController = {
     const results = [];
     const errors = [];
 
-    for (const file of files) {
-      try {
-        const buffer = await fs.readFile(file.path);
-        if (!validateFileType(buffer, file.mimetype)) {
-          errors.push({ file: file.originalname, error: 'Invalid content' });
-          await cleanupTempFiles([file.path]);
-          continue;
-        }
-
-        const result = await processFile(buffer, file, { category_id, subcategory_id, age_rating });
-        results.push(result);
-      } catch (err) {
-        console.error('Batch upload item error:', err);
-        errors.push({ file: file.originalname, error: err.message });
-      } finally {
-        await cleanupTempFiles([file.path]);
+    for (let i = 0; i < files.length; i += UPLOAD_CONCURRENCY) {
+      const batch = files.slice(i, i + UPLOAD_CONCURRENCY);
+      const batchResults = await Promise.all(
+        batch.map(async (file) => {
+          try {
+            const result = await processFile(file, { category_id, subcategory_id, age_rating });
+            return { ok: result };
+          } catch (err) {
+            console.error(`Batch upload item error (${file.originalname}):`, err.message);
+            return { err: { file: file.originalname, error: err.message } };
+          }
+        })
+      );
+      for (const r of batchResults) {
+        if (r.ok) results.push(r.ok);
+        else errors.push(r.err);
       }
+      // Clean up multer temp files for the just-processed batch
+      await Promise.all(batch.map(f => cleanupTempFiles([f.path])));
     }
 
     res.status(201).json({ uploaded: results.length, errors: errors.length, media: results, errorDetails: errors });
@@ -242,48 +165,33 @@ const MediaController = {
     }
 
     await db.transaction(async (client) => {
-      for (const id of ids) {
-        const itemUpdates = {};
-        if (category_id !== undefined) itemUpdates.categoryId = category_id;
-        if (subcategory_id !== undefined) itemUpdates.subcategoryId = subcategory_id;
-        if (age_rating !== undefined) itemUpdates.ageRating = age_rating;
-
-        if (category_id !== undefined && subcategory_id === undefined) {
-          const mediaResult = await client.query(
-            'SELECT subcategory_id FROM media WHERE id = $1',
-            [id]
-          );
-          const media = mediaResult.rows[0];
-          if (media && media.subcategory_id) {
-            const subResult = await client.query(
-              `SELECT * FROM subcategories WHERE category_id = $1 AND name = (
-                SELECT name FROM subcategories WHERE id = $2
-              )`,
-              [category_id, media.subcategory_id]
-            );
-            if (subResult.rows.length === 0) {
-              itemUpdates.subcategoryId = null;
-            }
-          }
-        }
-
-        if (Object.keys(itemUpdates).length === 0) continue;
-
-        const fields = [];
-        const values = [];
-        let idx = 1;
-        for (const [key, value] of Object.entries(itemUpdates)) {
-          const dbField = key.replace(/([A-Z])/g, '_$1').toLowerCase();
-          fields.push(`${dbField} = $${idx}`);
-          values.push(value);
-          idx++;
-        }
-        values.push(id);
-        await client.query(
-          `UPDATE media SET ${fields.join(', ')} WHERE id = $${idx}`,
-          values
-        );
+      // When changing category without explicit subcategory, clear stale subcategory references
+      // that don't belong to the new category (in one query instead of N).
+      if (category_id !== undefined && subcategory_id === undefined) {
+        await client.query(`
+          UPDATE media m
+          SET subcategory_id = NULL
+          WHERE m.id = ANY($1::int[])
+            AND m.subcategory_id IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM subcategories s
+              WHERE s.id = m.subcategory_id AND s.category_id = $2
+            )
+        `, [ids, category_id]);
       }
+
+      const sets = [];
+      const params = [];
+      let idx = 1;
+      if (category_id !== undefined) { sets.push(`category_id = $${idx++}`); params.push(category_id); }
+      if (subcategory_id !== undefined) { sets.push(`subcategory_id = $${idx++}`); params.push(subcategory_id); }
+      if (age_rating !== undefined) { sets.push(`age_rating = $${idx++}`); params.push(age_rating); }
+      params.push(ids);
+
+      await client.query(
+        `UPDATE media SET ${sets.join(', ')} WHERE id = ANY($${idx}::int[])`,
+        params
+      );
     });
 
     res.json({ message: 'Batch update completed', updated: ids.length });
@@ -294,13 +202,11 @@ const MediaController = {
     const media = await MediaModel.getById(id);
     if (!media) return res.status(404).json({ error: 'Media not found' });
 
-    await db.transaction(async (client) => {
-      await client.query('DELETE FROM media WHERE id = $1', [id]);
-    });
+    await db.query('DELETE FROM media WHERE id = $1', [id]);
 
-    await deleteFromS3(media.s3_key);
-    await deleteFromS3(media.thumbnail_s3_key);
-    if (media.display_s3_key) await deleteFromS3(media.display_s3_key);
+    const deletePromises = [deleteFromS3(media.s3_key), deleteFromS3(media.thumbnail_s3_key)];
+    if (media.display_s3_key) deletePromises.push(deleteFromS3(media.display_s3_key));
+    await Promise.all(deletePromises);
 
     res.json({ message: 'Media deleted' });
   },
@@ -311,110 +217,135 @@ const MediaController = {
       return res.status(400).json({ error: 'No IDs provided' });
     }
 
-    const toDeleteFromS3 = [];
-    await db.transaction(async (client) => {
-      for (const id of ids) {
-        const mediaResult = await client.query(
-          'SELECT s3_key, thumbnail_s3_key, display_s3_key FROM media WHERE id = $1',
-          [id]
-        );
-        const media = mediaResult.rows[0];
-        if (media) {
-          await client.query('DELETE FROM media WHERE id = $1', [id]);
-          toDeleteFromS3.push(media);
-        }
-      }
-    });
+    const rows = await db.query(
+      'SELECT id, s3_key, thumbnail_s3_key, display_s3_key FROM media WHERE id = ANY($1::int[])',
+      [ids]
+    );
 
-    for (const media of toDeleteFromS3) {
-      await deleteFromS3(media.s3_key);
-      await deleteFromS3(media.thumbnail_s3_key);
-      if (media.display_s3_key) await deleteFromS3(media.display_s3_key);
+    await db.query('DELETE FROM media WHERE id = ANY($1::int[])', [ids]);
+
+    const allDeletes = [];
+    for (const m of rows.rows) {
+      allDeletes.push(deleteFromS3(m.s3_key));
+      allDeletes.push(deleteFromS3(m.thumbnail_s3_key));
+      if (m.display_s3_key) allDeletes.push(deleteFromS3(m.display_s3_key));
     }
+    await Promise.all(allDeletes);
 
-    res.json({ message: 'Batch delete completed', deleted: ids.length });
+    res.json({ message: 'Batch delete completed', deleted: rows.rows.length });
   },
 };
 
-async function processFile(buffer, file, { category_id, subcategory_id, age_rating }) {
+// Streams a file from disk to S3 using multipart upload (no full file in memory).
+async function streamToS3(key, filePath, contentType) {
+  const upload = new Upload({
+    client: s3Client,
+    params: {
+      Bucket: bucket,
+      Key: key,
+      Body: createReadStream(filePath),
+      ContentType: contentType,
+    },
+    queueSize: 4,
+    partSize: 5 * 1024 * 1024,
+  });
+  await upload.done();
+}
+
+async function processFile(file, { category_id, subcategory_id, age_rating } = {}) {
   const MAX_PHOTO_SIZE = (parseInt(process.env.MAX_PHOTO_SIZE_MB, 10) || 50) * 1024 * 1024;
   const MAX_VIDEO_SIZE = (parseInt(process.env.MAX_VIDEO_SIZE_MB, 10) || 500) * 1024 * 1024;
   const isImage = file.mimetype.startsWith('image/');
   const maxSize = isImage ? MAX_PHOTO_SIZE : MAX_VIDEO_SIZE;
-  if (buffer.length > maxSize) {
-    throw new Error(`Файл слишком большой. Максимум ${maxSize / 1024 / 1024} МБ`);
+
+  // Check size BEFORE reading buffer into memory
+  if (file.size > maxSize) {
+    const err = new Error(`Файл слишком большой. Максимум ${maxSize / 1024 / 1024} МБ`);
+    err.status = 400;
+    throw err;
   }
+
   const type = isImage ? 'photo' : 'video';
   const ext = getExtensionFromMimeType(file.mimetype);
   const mediaId = uuidv4();
   const s3Key = `media/${mediaId}${ext}`;
   const thumbnailKey = `thumbnails/${mediaId}_thumb.jpg`;
   const displayKey = isImage ? `display/${mediaId}_display.jpg` : null;
-  const tempPaths = [];
+  const filePath = file.path;
 
-  try {
-    await uploadToS3(s3Key, buffer, file.mimetype);
+  let buffer = null;
+  let fileSize = file.size;
 
-    let thumbnailBuffer;
-    let displayBuffer = null;
-    if (type === 'photo') {
-      thumbnailBuffer = await sharp(buffer)
-        .resize(400, null, { withoutEnlargement: true })
-        .jpeg({ quality: 80 })
-        .toBuffer();
-      displayBuffer = await sharp(buffer)
-        .resize(1920, 1920, { fit: 'inside', withoutEnlargement: true })
-        .jpeg({ quality: 85 })
-        .toBuffer();
-    } else {
-      const tempPath = path.join(__dirname, '../uploads', `${mediaId}_temp${ext}`);
-      await fs.writeFile(tempPath, buffer);
-      tempPaths.push(tempPath);
-      thumbnailBuffer = await generateVideoThumbnail(tempPath);
+  // For images: read buffer once for content validation + sharp processing.
+  // For videos: validate via ffprobe on the multer temp file, no buffer needed.
+  if (isImage) {
+    buffer = await fs.readFile(filePath);
+    if (!validateFileType(buffer, file.mimetype)) {
+      const err = new Error('Содержимое файла не соответствует его типу');
+      err.status = 400;
+      throw err;
     }
-
-    await uploadToS3(thumbnailKey, thumbnailBuffer, 'image/jpeg');
-    if (displayBuffer && displayKey) {
-      await uploadToS3(displayKey, displayBuffer, 'image/jpeg');
-    }
-
-    const media = await MediaModel.create({
-      type,
-      s3Key,
-      thumbnailS3Key: thumbnailKey,
-      displayS3Key: displayKey,
-      fileSize: buffer.length,
-      categoryId: category_id || null,
-      subcategoryId: subcategory_id || null,
-      ageRating: age_rating || null,
-    });
-
-    media.url = await getSignedUrlForKey(media.s3_key, SIGN_URL_EXPIRES);
-    media.thumbnail_url = await getSignedUrlForKey(media.thumbnail_s3_key, SIGN_URL_EXPIRES);
-    media.display_url = displayKey ? await getSignedUrlForKey(media.display_s3_key, SIGN_URL_EXPIRES) : null;
-
-    return media;
-  } finally {
-    await cleanupTempFiles(tempPaths);
+    fileSize = buffer.length;
+  } else {
+    await validateVideoFile(filePath);
   }
+
+  // Generate thumbnail + display in parallel for images
+  let thumbnailBuffer;
+  let displayBuffer = null;
+  if (isImage) {
+    [thumbnailBuffer, displayBuffer] = await Promise.all([
+      sharp(buffer).resize(400, null, { withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer(),
+      sharp(buffer).resize(1920, 1920, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer(),
+    ]);
+  } else {
+    thumbnailBuffer = await generateVideoThumbnail(filePath);
+  }
+
+  // Upload original + thumbnail + display in parallel
+  const uploadOps = [
+    streamToS3(s3Key, filePath, file.mimetype),
+    uploadBufferToS3(thumbnailKey, thumbnailBuffer, 'image/jpeg'),
+  ];
+  if (displayBuffer && displayKey) {
+    uploadOps.push(uploadBufferToS3(displayKey, displayBuffer, 'image/jpeg'));
+  }
+  await Promise.all(uploadOps);
+
+  const media = await MediaModel.create({
+    type,
+    s3Key,
+    thumbnailS3Key: thumbnailKey,
+    displayS3Key: displayKey,
+    fileSize,
+    categoryId: category_id || null,
+    subcategoryId: subcategory_id || null,
+    ageRating: age_rating || null,
+  });
+
+  return await getByIdUrls(media, { protocol: 'http', get: () => 'localhost' });
+}
+
+async function uploadBufferToS3(key, buffer, contentType) {
+  const { PutObjectCommand } = require('@aws-sdk/client-s3');
+  await s3Client.send(new PutObjectCommand({
+    Bucket: bucket,
+    Key: key,
+    Body: buffer,
+    ContentType: contentType,
+  }));
 }
 
 async function cleanupTempFiles(paths) {
-  for (const p of paths) {
-    try {
-      await fs.unlink(p);
-    } catch {
-      // ignore
-    }
-  }
+  await Promise.all(paths.map(async (p) => {
+    try { await fs.unlink(p); } catch {}
+  }));
 }
 
 function validateVideoFile(videoPath) {
   return new Promise((resolve, reject) => {
     ffmpeg.ffprobe(videoPath, (err) => {
-      if (err) {
-        return reject(new Error('Файл повреждён или имеет неподдерживаемый видеоформат'));
-      }
+      if (err) return reject(new Error('Файл повреждён или имеет неподдерживаемый видеоформат'));
       resolve();
     });
   });

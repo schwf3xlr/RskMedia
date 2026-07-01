@@ -7,9 +7,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/base.css">
+  <link rel="stylesheet" href="/css/layout.css">
+  <link rel="stylesheet" href="/css/components.css">
+  <link rel="stylesheet" href="/css/pages.css">
   <link rel="stylesheet" href="/css/style.css">
-  <script src="/js/lucide.min.js" nonce="<%= nonce %>"></script>
+  <script src="/js/lucide.min.js" defer nonce="<%= nonce %>"></script>
   <meta name="csrf-token" content="<%= csrfToken %>">
-  <script nonce="<%= nonce %>">window.RSK_USER_TYPE = '<%= user ? user.type : "client" %>';</script>
+  <meta name="user-type" content="<%= user ? user.type : 'client' %>">
 </head>
 <body>

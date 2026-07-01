@@ -40,7 +40,7 @@ const FavoritesController = {
     const { category_id, subcategory_id, age, sort, page = 1, limit = 20 } = req.query;
     const offset = (page - 1) * limit;
 
-    const favorites = await FavoritesModel.getByTokenId(req.user.token_id, {
+    const favorites = await FavoritesModel.getByTokenIdWithCount(req.user.token_id, {
       categoryId: category_id,
       subcategoryId: subcategory_id,
       age,
@@ -49,12 +49,7 @@ const FavoritesController = {
       offset: parseInt(offset),
     });
 
-    const total = await FavoritesModel.getTotalCount(req.user.token_id, {
-      categoryId: category_id,
-      subcategoryId: subcategory_id,
-      age,
-    });
-
+    const total = favorites.length > 0 ? parseInt(favorites[0].total_count, 10) : 0;
     const favoritesWithUrls = await enrichFavorites(favorites, req);
 
     res.json({
@@ -67,12 +62,19 @@ const FavoritesController = {
 
   async add(req, res) {
     const { media_id } = req.params;
-    const mediaExists = await FavoritesModel.mediaExists(media_id);
-    if (!mediaExists) {
-      return res.status(404).json({ error: 'Media not found' });
+    try {
+      const favorite = await FavoritesModel.add(req.user.token_id, media_id);
+      if (!favorite) {
+        return res.status(200).json({ message: 'Already in favorites' });
+      }
+      res.status(201).json({ message: 'Added to favorites', favorite });
+    } catch (err) {
+      // FK violation on media_id (23503) -> media doesn't exist
+      if (err.code === '23503') {
+        return res.status(404).json({ error: 'Media not found' });
+      }
+      throw err;
     }
-    const favorite = await FavoritesModel.add(req.user.token_id, media_id);
-    res.status(201).json({ message: 'Added to favorites', favorite });
   },
 
   async remove(req, res) {
