@@ -55,37 +55,7 @@ const gallery = {
     this.setupFilters();
     this.setupInfiniteScroll();
     this.setupModal();
-    this.setupImageObserver();
     await this.loadMore();
-  },
-
-  setupImageObserver() {
-    this.imageObserver = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
-        if (!entry.isIntersecting) return;
-        const card = entry.target;
-        const mediaEl = card.querySelector('img');
-        const fullSrc = card.dataset.fullSrc;
-        if (!fullSrc || !mediaEl || card.dataset.upgraded === '1') {
-          this.imageObserver.unobserve(card);
-          return;
-        }
-
-        // Preload the high-res version in the browser cache, then swap src
-        // directly. Because the image is already cached, the src change
-        // paints instantly - no opacity flicker, no 300ms fade dance.
-        const upgrade = new Image();
-        upgrade.onload = () => {
-          mediaEl.src = fullSrc;
-          card.dataset.upgraded = '1';
-        };
-        upgrade.onerror = () => {
-          card.classList.remove('skeleton');
-        };
-        upgrade.src = fullSrc;
-        this.imageObserver.unobserve(card);
-      });
-    }, { rootMargin: '200px' });
   },
 
   setupFilters() {
@@ -290,25 +260,27 @@ const gallery = {
     card.setAttribute('aria-label', `${item.type} ${item.age_rating !== null ? item.age_rating + ' лет' : ''}`);
 
     const isVideo = item.type === 'video';
-    const thumbSrc = item.thumbnail_url || item.url;
-    // For photos, upgrade to display_url when in viewport; for videos, keep thumbnail
-    const fullSrc = isVideo ? null : (item.display_url || null);
-    if (fullSrc) card.dataset.fullSrc = fullSrc;
-
     const mediaEl = document.createElement('img');
-    mediaEl.src = thumbSrc;
+    if (isVideo || !item.display_url) {
+      // Videos always show the thumbnail (no full-res frame available);
+      // items missing a display_url fall back to the thumbnail too.
+      mediaEl.src = item.thumbnail_url || item.url;
+    } else {
+      // Photos: let the browser pick between thumb and display based on
+      // viewport + DPR via srcset/sizes. One image load, no upgrade swap,
+      // no flicker. Bandwidth-friendly on low-DPR (picks 400w thumb),
+      // high-quality on high-DPR (picks 1920w display).
+      const thumbUrl = item.thumbnail_url || item.display_url;
+      mediaEl.src = item.display_url;
+      mediaEl.srcset = `${thumbUrl} 400w, ${item.display_url} 1920w`;
+      mediaEl.sizes = '(max-width: 600px) 50vw, (max-width: 1024px) 33vw, 20vw';
+    }
     mediaEl.loading = 'lazy';
     mediaEl.decoding = 'async';
     mediaEl.alt = `${item.type} ${item.age_rating !== null ? item.age_rating + ' лет' : ''}`;
     mediaEl.addEventListener('load', () => card.classList.remove('skeleton'), { once: true });
     mediaEl.addEventListener('error', () => card.classList.remove('skeleton'), { once: true });
     card.appendChild(mediaEl);
-
-    if (fullSrc && this.imageObserver) {
-      this.imageObserver.observe(card);
-    } else {
-      card.classList.remove('skeleton');
-    }
 
     const overlay = document.createElement('div');
     overlay.className = 'card-overlay';
@@ -686,8 +658,6 @@ const gallery = {
     const mediaEl = document.createElement(isVideo ? 'video' : 'img');
     const displaySrc = isVideo ? item.url : (item.display_url || item.url);
     mediaEl.src = displaySrc;
-    mediaEl.dataset.fullSrc = item.url;
-    mediaEl.dataset.displaySrc = item.display_url || item.url;
     mediaEl.controls = isVideo;
     mediaEl.className = 'modal-media';
     mediaEl.setAttribute('aria-label', isVideo ? 'Видео' : 'Изображение');
