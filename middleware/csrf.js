@@ -44,9 +44,19 @@ function csrfTokenMiddleware(req, res, next) {
   next();
 }
 
+// Public endpoint clients hit after a 403 "Invalid or missing CSRF token" so
+// they can refresh their in-memory <meta> value without a full page reload.
+// The cookie is httpOnly, so JS can't read it directly — this returns just
+// the value (also refreshing the cookie if it was cleared) as JSON.
+function csrfTokenEndpoint(req, res) {
+  const token = getCsrfToken(req, res);
+  res.json({ csrfToken: token });
+}
+
 module.exports = {
   csrfProtection,
   csrfTokenMiddleware,
+  csrfTokenEndpoint,
   CSRF_COOKIE_NAME,
   CSRF_HEADER_NAME,
 };

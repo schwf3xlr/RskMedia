@@ -110,22 +110,37 @@ async function fetchFullBuffer(cacheKey, s3Key) {
   return promise;
 }
 
+// Pick the best (smallest, best-supported) modern image format from the
+// Accept header. Preference: avif > webp > (no auto-conversion). Only used
+// when the client didn't explicitly pick a format via ?format=.
+function negotiateFormat(acceptHeader) {
+  if (!acceptHeader) return null;
+  const a = acceptHeader.toLowerCase();
+  if (a.includes('image/avif')) return 'avif';
+  if (a.includes('image/webp')) return 'webp';
+  return null;
+}
+
 // Parse and validate `?w=` and `?format=` query parameters. Returns either
 // { kind: 'passthrough' } (no transform needed) or { kind: 'transform', width, format }
 // with validated values. Rejects anything outside the allow-list.
-function parseTransformParams(query) {
+function parseTransformParams(query, acceptHeader) {
   const w = query.w !== undefined ? parseInt(query.w, 10) : null;
-  const f = query.format !== undefined ? String(query.format).toLowerCase() : null;
-
-  if (w === null && f === null) return { kind: 'passthrough' };
+  const explicitF = query.format !== undefined ? String(query.format).toLowerCase() : null;
 
   if (w !== null && (!ALLOWED_WIDTHS.includes(w) || w <= 0)) {
     return { kind: 'invalid', reason: `Width must be one of: ${ALLOWED_WIDTHS.join(', ')}` };
   }
-  if (f !== null && !ALLOWED_FORMATS[f]) {
+  if (explicitF !== null && !ALLOWED_FORMATS[explicitF]) {
     return { kind: 'invalid', reason: `Format must be one of: ${Object.keys(ALLOWED_FORMATS).join(', ')}` };
   }
-  return { kind: 'transform', width: w, format: f };
+
+  // If width is requested but no format, sniff Accept for avif/webp. This
+  // saves ~30% on card thumbnails for browsers advertising avif/webp.
+  const negotiated = explicitF !== null ? explicitF : (w !== null ? negotiateFormat(acceptHeader) : null);
+
+  if (w === null && negotiated === null) return { kind: 'passthrough' };
+  return { kind: 'transform', width: w, format: negotiated };
 }
 
 // Apply sharp resize + format conversion. The output is cached separately
@@ -201,7 +216,7 @@ async function handle(req, res, s3Key, isHead) {
 
   // Parse transform params (w/format). Range requests on transformed output
   // are not supported - clients that need ranges should request the source.
-  const transform = parseTransformParams(req.query);
+  const transform = parseTransformParams(req.query, req.headers.accept);
   if (transform.kind === 'invalid') {
     return res.status(400).json({ error: transform.reason });
   }
@@ -220,6 +235,10 @@ async function handle(req, res, s3Key, isHead) {
   res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('Cache-Control', `public, max-age=${CACHE_TTL_S}`);
   res.setHeader('ETag', variantEtag);
+  // Vary: Accept — different Accept headers can yield different formats
+  // now that we auto-negotiate avif/webp. Without this, a downstream
+  // shared cache could hand a Chrome-cached avif to Safari.
+  if (isTransformed) res.setHeader('Vary', 'Accept');
 
   // ETag-based 304: skip body if client already has this version
   if (req.headers['if-none-match'] === variantEtag) {

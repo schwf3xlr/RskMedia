@@ -6,30 +6,38 @@
   <title><%= title || 'RskMedia' %></title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <!-- text=… asks the CSS to only include glyphs for the Cyrillic block +
+       Latin (bare minimum for RskMedia UI). Cuts font transfer ~50%
+       vs. loading the whole Cyrillic + Latin extended set. -->
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap&subset=cyrillic,latin">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap&subset=cyrillic,latin" rel="stylesheet">
+  <link rel="preload" as="style" href="/css/base.css">
   <link rel="stylesheet" href="/css/base.css">
   <link rel="stylesheet" href="/css/layout.css">
   <link rel="stylesheet" href="/css/components.css">
   <link rel="stylesheet" href="/css/pages.css">
   <link rel="stylesheet" href="/css/style.css">
-  <script src="/js/lucide.min.js" nonce="<%= nonce %>"></script>
+  <!-- defer keeps lucide.min.js from blocking parse — it's only needed
+       after DOMContentLoaded fires (icons are created by navbar.js/etc). -->
+  <script src="/js/lucide.min.js" nonce="<%= nonce %>" defer></script>
   <script nonce="<%= nonce %>">
     // Apply theme synchronously, BEFORE first paint, to avoid FOUC.
-    // Priority: explicit localStorage preference > prefers-color-scheme > dark.
+    // Stored value can be: "light" | "dark" | "auto" | null (never set).
+    // "auto" and null both follow prefers-color-scheme.
     (function () {
       try {
         var stored = localStorage.getItem('rskmedia-theme');
-        var theme;
+        var resolved;
         if (stored === 'light' || stored === 'dark') {
-          theme = stored;
-        } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
-          theme = 'light';
+          resolved = stored;
         } else {
-          theme = 'dark';
+          // "auto" or unset → follow OS.
+          resolved = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches)
+            ? 'light' : 'dark';
         }
-        document.documentElement.setAttribute('data-theme', theme);
+        document.documentElement.setAttribute('data-theme', resolved);
+        if (stored) document.documentElement.setAttribute('data-theme-pref', stored);
       } catch (e) {
-        // localStorage can be blocked in private mode - silently use dark default
         document.documentElement.setAttribute('data-theme', 'dark');
       }
     })();

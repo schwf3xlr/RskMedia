@@ -16,8 +16,10 @@
         Избранное
       </a>
       <button class="navbar-link navbar-theme-toggle" id="themeToggle" aria-label="Сменить тему" title="Сменить тему">
-        <i data-lucide="sun" class="navbar-theme-icon-light" id="themeIconLight"></i>
-        <i data-lucide="moon" class="navbar-theme-icon-dark" id="themeIconDark"></i>
+        <!-- CSS shows one icon based on data-theme-pref (light/dark/auto). -->
+        <i data-lucide="sun" class="navbar-theme-icon navbar-theme-icon-light"></i>
+        <i data-lucide="moon" class="navbar-theme-icon navbar-theme-icon-dark"></i>
+        <i data-lucide="monitor" class="navbar-theme-icon navbar-theme-icon-auto"></i>
       </button>
       <% if (user && user.type === 'admin') { %>
       <a href="/admin" class="navbar-link navbar-link-admin <%= activePage === 'admin' ? 'active' : '' %>">
@@ -34,4 +36,6 @@
     </div>
   </div>
 </nav>
-<script src="/js/navbar.js" nonce="<%= nonce %>"></script>
+<!-- defer so it runs AFTER the deferred lucide.min.js: both are scheduled
+     at DOMContentLoaded and defer preserves document order. -->
+<script src="/js/navbar.js" nonce="<%= nonce %>" defer></script>

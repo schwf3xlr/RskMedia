@@ -52,7 +52,7 @@ const AdminController = {
     if (expires_at !== undefined) updates.expires_at = expires_at || null;
 
     const token = await UserModel.updateToken(id, updates);
-    invalidateAuthCache();
+    invalidateAuthCache(tokenId);
     res.json(token);
   },
 
@@ -63,7 +63,7 @@ const AdminController = {
       return res.status(403).json({ error: 'Нельзя удалить текущий токен' });
     }
     await UserModel.deleteToken(tokenId);
-    invalidateAuthCache();
+    invalidateAuthCache(tokenId);
     res.json({ message: 'Токен удалён' });
   },
 
@@ -148,7 +148,18 @@ const AdminController = {
     }
 
     const client = await db.pool.connect();
+    // Advisory lock — key 1 is reserved for the restore operation. Two admins
+    // clicking "Restore" simultaneously would otherwise race on TRUNCATE +
+    // INSERT and produce a mixed final state. pg_try_advisory_lock() returns
+    // false immediately if held; the lock is auto-released when the session
+    // (this client) is released back to the pool.
+    let restoreLockHeld = false;
     try {
+      const lockResult = await client.query('SELECT pg_try_advisory_lock(1) AS locked');
+      if (!lockResult.rows[0].locked) {
+        return res.status(409).json({ error: 'Восстановление уже выполняется' });
+      }
+      restoreLockHeld = true;
       const tableColumns = {};
       for (const table of BACKUP_TABLES) {
         const colResult = await client.query(
@@ -253,13 +264,27 @@ const AdminController = {
         const columns = Object.keys(rows[0]).filter(c => rules.allowed.includes(c) && existingColumns.includes(c));
         if (columns.length === 0) continue;
 
+        // Bulk-insert in chunks. A single INSERT with N rows is one round
+        // trip; the old per-row loop was ~10s per 10K media on a warm
+        // connection. PostgreSQL limits placeholders to 65535, and chunks
+        // of 200 rows keep prepared-statement caching hot without blowing
+        // the client-side memory when a wide row (media) has ~11 columns.
+        const CHUNK = 200;
         const colNames = columns.join(', ');
-        const placeholders = columns.map((_, i) => `$${i + 1}`).join(', ');
-        const insertQuery = `INSERT INTO ${table} (${colNames}) VALUES (${placeholders})`;
-
-        for (const row of rows) {
-          const values = columns.map(c => row[c]);
-          await client.query(insertQuery, values);
+        for (let start = 0; start < rows.length; start += CHUNK) {
+          const chunk = rows.slice(start, start + CHUNK);
+          const values = [];
+          const placeholders = chunk.map((row, r) => {
+            const rowPh = columns.map((c, i) => {
+              values.push(row[c]);
+              return `$${r * columns.length + i + 1}`;
+            });
+            return `(${rowPh.join(', ')})`;
+          }).join(', ');
+          await client.query(
+            `INSERT INTO ${table} (${colNames}) VALUES ${placeholders}`,
+            values
+          );
         }
 
         const seqName = await client.query(
@@ -281,6 +306,9 @@ const AdminController = {
       console.error('Restore error:', err);
       res.status(500).json({ error: 'Ошибка восстановления базы данных' });
     } finally {
+      if (restoreLockHeld) {
+        await client.query('SELECT pg_advisory_unlock(1)').catch(() => {});
+      }
       client.release();
     }
   },

@@ -129,13 +129,24 @@ const MediaModel = {
     const values = [];
     let idx = 1;
 
+    let thumbnailChanged = false;
+    let phashExplicitlySet = false;
     for (const [key, value] of Object.entries(updates)) {
       if (value === undefined) continue;
       const dbField = key.replace(/([A-Z])/g, '_$1').toLowerCase();
       if (!ALLOWED_MEDIA_FIELDS.includes(dbField)) continue;
+      if (dbField === 'thumbnail_s3_key') thumbnailChanged = true;
+      if (dbField === 'phash') phashExplicitlySet = true;
       fields.push(`${dbField} = $${idx}`);
       values.push(value);
       idx++;
+    }
+    // If the thumbnail key changed but phash wasn't updated by the caller,
+    // the old phash no longer describes the (potentially different) image.
+    // Null it so findDuplicates recomputes on next pass — otherwise stale
+    // hashes cause phantom "duplicate" matches or miss actual dupes.
+    if (thumbnailChanged && !phashExplicitlySet) {
+      fields.push('phash = NULL');
     }
     if (fields.length === 0) return await this.getById(id);
     values.push(id);

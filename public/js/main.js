@@ -55,8 +55,24 @@ const auth = {
   },
 };
 
+// Refresh the CSRF token in <meta> from the server. Called after a 403
+// "Invalid or missing CSRF token" so a stale token in the DOM doesn't require
+// a full page reload to recover.
+async function refreshCsrfToken() {
+  try {
+    const res = await fetch('/api/csrf-token', { credentials: 'include' });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    if (meta && data.csrfToken) meta.content = data.csrfToken;
+    return data.csrfToken || null;
+  } catch {
+    return null;
+  }
+}
+
 const api = {
-  async request(url, options = {}) {
+  async request(url, options = {}, _retried = false) {
     const headers = auth.getAuthHeaders();
     const hasBody = options.body && typeof options.body === 'string';
     const body = hasBody ? JSON.parse(options.body) : {};
@@ -72,6 +88,18 @@ const api = {
       },
       body: hasBody ? JSON.stringify(body) : options.body,
     });
+
+    // 403 has two shapes: auth revoked (log out) and CSRF token stale (refresh
+    // + retry once). Peek at the body without consuming it, since the retry
+    // needs the original options intact.
+    if (response.status === 403 && !_retried) {
+      const cloned = response.clone();
+      const err = await cloned.json().catch(() => ({}));
+      if (err.error === 'Invalid or missing CSRF token') {
+        const fresh = await refreshCsrfToken();
+        if (fresh) return this.request(url, options, true);
+      }
+    }
 
     if (response.status === 401 || response.status === 403) {
       auth.logout();
@@ -184,6 +212,10 @@ const api = {
 
 const toast = {
   container: null,
+  // Cap the number of visible toasts so a flaky backend spraying errors
+  // can't wall off the whole viewport. Oldest is removed when we exceed
+  // MAX_STACK.
+  MAX_STACK: 4,
 
   init() {
     if (this.container) return;
@@ -192,16 +224,45 @@ const toast = {
     document.body.appendChild(this.container);
   },
 
+  // type: 'success' | 'error' | 'info' | 'warning'
   show(message, type = 'success') {
     this.init();
+    // Prune oldest before appending so we never exceed MAX_STACK.
+    const existing = this.container.querySelectorAll('.toast');
+    if (existing.length >= this.MAX_STACK) {
+      existing[0].remove();
+    }
+
     const el = document.createElement('div');
     el.className = `toast ${type}`;
-    el.textContent = message;
-    this.container.appendChild(el);
-    setTimeout(() => {
+    el.setAttribute('role', type === 'error' ? 'alert' : 'status');
+    // Text-node message so any HTML in error strings is rendered as text.
+    // Icon comes from a CSS ::before selector so we don't need to inject
+    // SVG per toast type.
+    const text = document.createElement('span');
+    text.className = 'toast-text';
+    text.textContent = message;
+    el.appendChild(text);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'toast-close';
+    closeBtn.setAttribute('aria-label', 'Закрыть');
+    closeBtn.textContent = '×';
+    el.appendChild(closeBtn);
+
+    const dismiss = () => {
+      if (!el.isConnected) return;
       el.style.opacity = '0';
       setTimeout(() => el.remove(), 300);
-    }, 3000);
+    };
+
+    // Click anywhere (except drag/select) dismisses; also explicit ×.
+    el.addEventListener('click', dismiss);
+
+    this.container.appendChild(el);
+    const timer = setTimeout(dismiss, type === 'error' ? 5000 : 3000);
+    el.addEventListener('mouseenter', () => clearTimeout(timer), { once: true });
   },
 };
 

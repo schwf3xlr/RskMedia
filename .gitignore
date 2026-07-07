@@ -13,3 +13,4 @@ docs/
 *.tmp
 *.temp
 deploy.sh
+public/css/style.min.css
