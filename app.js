@@ -9,7 +9,7 @@ const morgan = require('morgan');
 const initDatabase = require('./scripts/init-db');
 const { authenticateToken } = require('./middleware/auth');
 const { requireAdmin } = require('./middleware/admin');
-const { csrfProtection, csrfTokenMiddleware } = require('./middleware/csrf');
+const { csrfProtection, csrfTokenMiddleware, csrfTokenEndpoint } = require('./middleware/csrf');
 const { nonceMiddleware } = require('./middleware/nonce');
 const { AGE_RATINGS } = require('./config/constants');
 const { apiLimiter } = require('./middleware/rateLimiter');
@@ -31,6 +31,11 @@ function buildCspDirectives(res) {
     defaultSrc: ["'self'"],
     scriptSrc: ["'self'", `'nonce-${res.locals.nonce}'`],
     styleSrc: ["'self'", `'nonce-${res.locals.nonce}'`, "https://fonts.googleapis.com"],
+    // player.js/admin.js set element.style.* imperatively (zoom transforms,
+    // swipe-down opacity, etc). Browsers permit that under styleSrc today,
+    // but that fallback is being tightened — declaring styleSrcAttr
+    // explicitly locks the behavior in place.
+    styleSrcAttr: ["'unsafe-inline'"],
     fontSrc: ["'self'", "https://fonts.gstatic.com"],
     imgSrc: ["'self'", "data:", "blob:", "https:"],
     mediaSrc: ["'self'", "https:"],
@@ -89,8 +94,12 @@ app.use(express.static(path.join(__dirname, 'public'), {
   maxAge: process.env.NODE_ENV === 'production' ? '1d' : 0,
 }));
 
-// Media proxy — serves S3 media through local server (avoids CORS/firewall issues on phone)
-app.use('/media', require('./routes/mediaProxy'));
+// Media proxy — serves S3 media through local server (avoids CORS/firewall
+// issues on phone). Gated behind auth so anyone on the LAN can't hit
+// /media/original/<id> without a token. The auth cache (30s LRU) makes this
+// cheap — typical page has ~30 image requests but they all reuse one cached
+// verification result.
+app.use('/media', authenticateToken, require('./routes/mediaProxy'));
 
 // Unregister old service workers and prevent cross-origin fetch interception
 app.get('/sw.js', (req, res) => {
@@ -120,6 +129,12 @@ app.get('/sw.js', (req, res) => {
 // View engine
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
+
+// CSRF-token refresh endpoint — clients hit this after a 403 to refresh a
+// stale in-memory token without a full reload. GET is safe (no state change),
+// so we don't csrfProtection it (it's the very endpoint used to recover from
+// CSRF failures).
+app.get('/api/csrf-token', csrfTokenEndpoint);
 
 // API Routes
 app.use('/api/auth', csrfProtection, require('./routes/auth'));

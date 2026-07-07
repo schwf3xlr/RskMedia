@@ -35,12 +35,12 @@
 .btn-primary {
   background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
   color: white;
-  box-shadow: 0 2px 12px rgba(99, 102, 241, 0.25);
+  box-shadow: var(--shadow-accent);
 }
 
 .btn-primary:hover {
   transform: translateY(-2px);
-  box-shadow: 0 6px 24px rgba(99, 102, 241, 0.35);
+  box-shadow: var(--shadow-accent-lg);
 }
 
 .btn-secondary {
@@ -57,12 +57,12 @@
 .btn-danger {
   background: linear-gradient(135deg, var(--danger) 0%, #dc2626 100%);
   color: white;
-  box-shadow: 0 2px 12px rgba(239, 68, 68, 0.25);
+  box-shadow: var(--shadow-danger);
 }
 
 .btn-danger:hover {
   transform: translateY(-2px);
-  box-shadow: 0 6px 24px rgba(239, 68, 68, 0.35);
+  box-shadow: var(--shadow-danger-lg);
 }
 
 .btn-sm {
@@ -95,6 +95,13 @@
   animation: cardIn 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
   opacity: 0;
   transform: translateY(16px);
+  /* content-visibility: auto lets the browser skip layout + paint for
+     off-screen cards. Combined with contain-intrinsic-size it "reserves"
+     the card's slot in the grid, so the scrollbar stays stable and the
+     browser can jump to any position without laying out thousands of
+     cards. Big win once the grid exceeds ~500 items on mobile. */
+  content-visibility: auto;
+  contain-intrinsic-size: 260px 340px;
 }
 
 .media-card:hover {
@@ -146,33 +153,33 @@
 
 .card-age {
   position: absolute;
-  top: 12px;
-  left: 12px;
-  background: rgba(0,0,0,0.5);
+  top: var(--space-3);
+  left: var(--space-3);
+  background: var(--overlay-scrim);
   backdrop-filter: blur(8px);
-  padding: 4px 10px;
-  border-radius: 20px;
+  padding: var(--space-1) 10px;
+  border-radius: var(--radius-xl);
   font-size: 12px;
   font-weight: 600;
   color: white;
   pointer-events: none;
-  border: 1px solid rgba(255,255,255,0.1);
+  border: 1px solid var(--overlay-hairline);
   z-index: 2;
 }
 
 .card-favorite {
   position: absolute;
-  top: 12px;
-  right: 12px;
+  top: var(--space-3);
+  right: var(--space-3);
   width: 36px;
   height: 36px;
-  background: rgba(0,0,0,0.5);
+  background: var(--overlay-scrim);
   backdrop-filter: blur(8px);
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(255,255,255,0.1);
+  border: 1px solid var(--overlay-hairline);
   cursor: pointer;
   transition: var(--transition);
   z-index: 2;
@@ -181,7 +188,7 @@
 }
 
 .card-favorite:hover {
-  background: rgba(0,0,0,0.7);
+  background: var(--overlay-scrim-strong);
   transform: scale(1.15);
 }
 
@@ -373,15 +380,16 @@
   z-index: 1;
 }
 
+
 .modal-close {
   position: absolute;
-  top: 20px;
-  right: 20px;
+  top: var(--space-5);
+  right: var(--space-5);
   width: 48px;
   height: 48px;
-  background: rgba(0,0,0,0.5);
+  background: var(--overlay-scrim);
   backdrop-filter: blur(10px);
-  border: 1px solid rgba(255,255,255,0.1);
+  border: 1px solid var(--overlay-hairline);
   border-radius: 50%;
   color: white;
   cursor: pointer;
@@ -394,7 +402,7 @@
 }
 
 .modal-close:hover {
-  background: rgba(0,0,0,0.7);
+  background: var(--overlay-scrim-strong);
   transform: rotate(90deg);
 }
 
@@ -409,9 +417,9 @@
   transform: translateY(-50%);
   width: 56px;
   height: 56px;
-  background: rgba(0,0,0,0.5);
+  background: var(--overlay-scrim);
   backdrop-filter: blur(10px);
-  border: 1px solid rgba(255,255,255,0.1);
+  border: 1px solid var(--overlay-hairline);
   border-radius: 50%;
   color: white;
   cursor: pointer;
@@ -429,7 +437,7 @@
 }
 
 .modal-nav:hover {
-  background: rgba(0,0,0,0.7);
+  background: var(--overlay-scrim-strong);
   transform: translateY(-50%) scale(1.1);
 }
 
@@ -448,17 +456,17 @@
 
 .modal-bottom-bar {
   position: absolute;
-  bottom: 20px;
+  bottom: var(--space-5);
   left: 50%;
   transform: translateX(-50%);
   z-index: 10;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 20px;
-  background: rgba(0,0,0,0.5);
+  gap: var(--space-3);
+  padding: 10px var(--space-5);
+  background: var(--overlay-scrim);
   backdrop-filter: blur(10px);
-  border: 1px solid rgba(255,255,255,0.1);
+  border: 1px solid var(--overlay-hairline);
   border-radius: var(--radius-xl);
 }
 
@@ -527,13 +535,13 @@
 /* === MODAL EDIT BUTTON === */
 .modal-edit {
   position: absolute;
-  top: 20px;
-  left: 20px;
+  top: var(--space-5);
+  left: var(--space-5);
   width: 48px;
   height: 48px;
-  background: rgba(0,0,0,0.5);
+  background: var(--overlay-scrim);
   backdrop-filter: blur(10px);
-  border: 1px solid rgba(255,255,255,0.1);
+  border: 1px solid var(--overlay-hairline);
   border-radius: 50%;
   color: white;
   cursor: pointer;
@@ -546,7 +554,7 @@
 }
 
 .modal-edit:hover {
-  background: rgba(0,0,0,0.7);
+  background: var(--overlay-scrim-strong);
   transform: scale(1.08);
 }
 
@@ -761,35 +769,44 @@
   transition: opacity 0.3s;
 }
 
-.toast.success {
-  border-color: rgba(34, 197, 94, 0.3);
-  background: rgba(10, 10, 20, 0.95);
-}
-
-.toast.success::before {
+/* Common ::before badge — a colored dot with a matching glow. Icon-like
+   without pulling in an SVG per toast type. */
+.toast::before {
   content: '';
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  background: var(--success);
   flex-shrink: 0;
-  box-shadow: 0 0 8px var(--success);
+}
+.toast .toast-text {
+  flex: 1;
+  min-width: 0;
+}
+.toast .toast-close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+  padding: 0 4px;
+  transition: color 0.2s;
+}
+.toast .toast-close:hover {
+  color: var(--text-primary);
 }
 
-.toast.error {
-  border-color: rgba(239, 68, 68, 0.3);
-  background: rgba(10, 10, 20, 0.95);
-}
+.toast.success { border-color: rgba(34, 197, 94, 0.3); }
+.toast.success::before { background: var(--success); box-shadow: 0 0 8px var(--success); }
 
-.toast.error::before {
-  content: '';
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--danger);
-  flex-shrink: 0;
-  box-shadow: 0 0 8px var(--danger);
-}
+.toast.error { border-color: rgba(239, 68, 68, 0.3); }
+.toast.error::before { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+
+.toast.info { border-color: rgba(59, 130, 246, 0.3); }
+.toast.info::before { background: var(--info); box-shadow: 0 0 8px var(--info); }
+
+.toast.warning { border-color: rgba(245, 158, 11, 0.3); }
+.toast.warning::before { background: var(--warning); box-shadow: 0 0 8px var(--warning); }
 
 /* === BACK TO TOP === */
 /* Floating circular button in the bottom-right corner. Hidden until the
@@ -833,7 +850,9 @@
 }
 @media (max-width: 768px) {
   .back-to-top {
-    bottom: 16px;
+    /* Lift above the fixed bottom-nav (approx 64px + safe-area) so tapping
+       "back to top" doesn't fall behind the nav bar. */
+    bottom: calc(80px + env(safe-area-inset-bottom, 0));
     right: 16px;
     width: 40px;
     height: 40px;
@@ -852,8 +871,74 @@
    image. The .modal-open class is toggled by player.js in openModal/
    closeModal. */
 body.modal-open .back-to-top,
-body.modal-open .pull-to-refresh {
+body.modal-open .pull-to-refresh,
+body.modal-open .shortcut-help-btn {
   display: none !important;
+}
+
+/* Floating "?" — sits above the back-to-top button so tapping either
+   is easy without them overlapping. Follows the same theming. */
+.shortcut-help-btn {
+  position: fixed;
+  bottom: calc(24px + 52px);
+  right: 24px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--bg-3);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 18px;
+  cursor: pointer;
+  z-index: 2900;
+  transition: color 0.2s, background 0.2s, border-color 0.2s;
+  padding: 0;
+}
+.shortcut-help-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-4);
+  border-color: var(--border-hover);
+}
+@media (max-width: 768px) {
+  .shortcut-help-btn {
+    bottom: calc(80px + env(safe-area-inset-bottom, 0) + 48px);
+    right: 16px;
+  }
+}
+
+.shortcut-help-modal {
+  max-width: 480px;
+  text-align: left;
+}
+.shortcut-help-title {
+  font-family: var(--font-display);
+  font-size: 18px;
+  margin-bottom: var(--space-4);
+}
+.shortcut-help-list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: var(--space-5);
+  row-gap: var(--space-2);
+  margin-bottom: var(--space-5);
+}
+.shortcut-help-list dt {
+  font-family: var(--font-display);
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  min-width: 40px;
+  text-align: center;
+}
+.shortcut-help-list dd {
+  color: var(--text-secondary);
+  align-self: center;
 }
 
 /* === PULL TO REFRESH === */

@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node app.js",
     "dev": "nodemon app.js",
-    "init-db": "node scripts/init-db.js"
+    "init-db": "node scripts/init-db.js",
+    "build:css": "node scripts/build-css.js",
+    "analyze": "node scripts/analyze-db.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.478.0",

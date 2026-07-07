@@ -395,7 +395,7 @@
 
 .queue-item {
   display: grid;
-  grid-template-columns: 36px 1fr auto 60px;
+  grid-template-columns: 36px 1fr auto 60px auto;
   gap: 12px;
   align-items: center;
   padding: 10px 14px;
@@ -473,6 +473,62 @@
   background: linear-gradient(90deg, var(--accent) 0%, var(--accent-2) 100%);
   border-radius: 4px;
   transition: width 0.3s;
+}
+
+.queue-item .queue-progress-fill.error {
+  background: linear-gradient(90deg, var(--danger) 0%, #dc2626 100%);
+}
+
+.queue-item .queue-retry {
+  min-width: 34px;
+  padding: 0 8px;
+}
+.queue-item.queue-item-error {
+  border-color: rgba(239, 68, 68, 0.25);
+}
+
+/* Overall batch progress summary — sits above the queue. */
+.batch-progress-summary {
+  margin-top: 12px;
+  padding: 12px 16px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.batch-progress-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.batch-progress-count {
+  font-family: var(--font-display);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.batch-progress-eta {
+  font-size: 13px;
+  color: var(--text-secondary);
+  flex: 1;
+}
+.batch-progress-hide {
+  margin-left: auto;
+}
+.batch-progress-bar {
+  height: 6px;
+  background: var(--bg-3);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.batch-progress-fill {
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, var(--accent) 0%, var(--accent-2) 100%);
+  border-radius: 4px;
+  transition: width 0.3s;
+}
+.upload-queue.queue-hidden {
+  display: none;
 }
 
 /* Batch actions */

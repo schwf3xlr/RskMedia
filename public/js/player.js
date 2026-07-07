@@ -65,6 +65,10 @@ const gallery = {
   _currentModalItem: null,
 
   async init() {
+    // Render skeleton placeholders synchronously so the first paint has
+    // real geometry — otherwise the page is a blank white block for the
+    // 200-800ms it takes categories + media to arrive.
+    this.renderInitialSkeletons();
     // Categories + subcategories are independent — fetch in parallel
     await Promise.all([this.loadCategories(), this.loadSubcategories()]);
     this.restoreFiltersFromURL();
@@ -73,7 +77,52 @@ const gallery = {
     this.setupModal();
     this.setupBackToTop();
     this.setupPullToRefresh();
+    this.setupShortcutHelp();
+    this.setupDensityPicker();
     await this.loadMore();
+  },
+
+  setupDensityPicker() {
+    const picker = document.querySelector('.density-picker');
+    if (!picker) return;
+    const KEY = 'rskmedia-density';
+    let stored;
+    try { stored = localStorage.getItem(KEY); } catch {}
+    const initial = ['comfortable', 'compact', 'dense'].includes(stored) ? stored : 'compact';
+    const apply = (density) => {
+      document.documentElement.setAttribute('data-density', density);
+      picker.querySelectorAll('.density-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.density === density);
+      });
+    };
+    apply(initial);
+    picker.addEventListener('click', (e) => {
+      const btn = e.target.closest('.density-btn');
+      if (!btn) return;
+      const density = btn.dataset.density;
+      apply(density);
+      try { localStorage.setItem(KEY, density); } catch {}
+    });
+  },
+
+  renderInitialSkeletons() {
+    const grid = document.getElementById('mediaGrid');
+    if (!grid) return;
+    const count = window.innerWidth < 600 ? 4 : 6;
+    for (let i = 0; i < count; i++) {
+      const el = document.createElement('div');
+      el.className = 'media-card skeleton skeleton-initial';
+      el.style.animationDelay = `${i * 0.04}s`;
+      grid.appendChild(el);
+    }
+    this._initialSkeletonCount = count;
+  },
+
+  clearInitialSkeletons() {
+    if (!this._initialSkeletonCount) return;
+    const grid = document.getElementById('mediaGrid');
+    if (grid) grid.querySelectorAll('.skeleton-initial').forEach(el => el.remove());
+    this._initialSkeletonCount = 0;
   },
 
   setupFilters() {
@@ -147,6 +196,14 @@ const gallery = {
   },
 
   resetGrid() {
+    // Modal must close before we wipe this.media — otherwise navigateModal /
+    // edit / delete would run against a stale index and either open the wrong
+    // item or throw on _currentModalItem = null. Guard so we don't touch DOM
+    // if it's already inactive.
+    const modal = document.getElementById('mediaModal');
+    if (modal && modal.classList.contains('active')) {
+      this.closeModal();
+    }
     this.page = 1;
     this.media = [];
     this.hasMore = true;
@@ -155,6 +212,9 @@ const gallery = {
     if (this.abortController) this.abortController.abort();
     const grid = document.getElementById('mediaGrid');
     if (grid) grid.innerHTML = '';
+    // Show skeletons again for the new filter's first page so we don't
+    // flash an empty grid while the request is in flight.
+    this.renderInitialSkeletons();
   },
 
   async loadCategories() {
@@ -177,15 +237,39 @@ const gallery = {
     const sentinel = document.getElementById('sentinel');
     if (!sentinel) return;
 
-    const observer = new IntersectionObserver((entries) => {
+    // Bigger rootMargin so we start the next request while the user still
+    // has a screen of cards to look at — hides the network latency.
+    this._infiniteObserver = new IntersectionObserver((entries) => {
       entries.forEach(entry => {
         if (entry.isIntersecting && !this.loading && this.hasMore) {
           this.loadMore();
         }
       });
-    }, { rootMargin: '300px' });
+    }, { rootMargin: '800px' });
 
-    observer.observe(sentinel);
+    this._infiniteObserver.observe(sentinel);
+  },
+
+  // IntersectionObserver only fires when the target CROSSES the intersect
+  // boundary — if a page of results is short enough that the sentinel
+  // stayed in view after the load, no further callback ever fires and the
+  // feed appears frozen until the user scrolls up a bit (which re-crosses
+  // the boundary). This runs after every successful loadMore and, if the
+  // sentinel is still in the trigger zone AND we haven't reached the end,
+  // schedules another load. requestAnimationFrame lets layout settle
+  // before we measure geometry.
+  _maybeLoadMoreIfSentinelVisible() {
+    if (!this.hasMore || this.loading) return;
+    const sentinel = document.getElementById('sentinel');
+    if (!sentinel) return;
+    requestAnimationFrame(() => {
+      if (this.loading || !this.hasMore) return;
+      const rect = sentinel.getBoundingClientRect();
+      // Match the observer's rootMargin so behavior is consistent.
+      const TRIGGER = 800;
+      const inTriggerZone = rect.top < window.innerHeight + TRIGGER;
+      if (inTriggerZone) this.loadMore();
+    });
   },
 
   async loadMore() {
@@ -209,6 +293,9 @@ const gallery = {
 
       const items = response.media || response;
 
+      // First real payload arrived — drop skeleton placeholders regardless
+      // of empty or populated response.
+      if (this.page === 1) this.clearInitialSkeletons();
       if (items.length === 0) {
         this.hasMore = false;
         if (this.page === 1 && this.media.length === 0) {
@@ -244,6 +331,9 @@ const gallery = {
     } finally {
       this.loading = false;
       if (spinner) spinner.classList.add('hidden');
+      // Cover the "sentinel never re-fires" case — see the doc comment
+      // on _maybeLoadMoreIfSentinelVisible for the details.
+      this._maybeLoadMoreIfSentinelVisible();
     }
   },
 
@@ -467,8 +557,54 @@ const gallery = {
       }
       const tag = (e.target && e.target.tagName) || '';
       if (tag === 'SELECT' || tag === 'INPUT' || tag === 'TEXTAREA') return;
-      if (e.key === 'ArrowLeft') this.navigateModal(-1);
-      if (e.key === 'ArrowRight') this.navigateModal(1);
+
+      // Navigation
+      if (e.key === 'ArrowLeft') { this.navigateModal(-1); return; }
+      if (e.key === 'ArrowRight') { this.navigateModal(1); return; }
+
+      // Ignore combos so browser shortcuts like Cmd+F still work.
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      const key = e.key.toLowerCase();
+
+      // Favorite (F)
+      if (key === 'f' || key === 'а') {
+        const favBtn = document.getElementById('modalFavorite');
+        if (favBtn) { favBtn.click(); e.preventDefault(); }
+        return;
+      }
+
+      // Admin: open edit panel (E)
+      if (key === 'e' || key === 'у') {
+        const editBtn = document.getElementById('modalEdit');
+        if (editBtn) { editBtn.click(); e.preventDefault(); }
+        return;
+      }
+
+      // Admin: delete (Delete key) — click through the edit panel's delete
+      if (e.key === 'Delete') {
+        const editPanel = document.getElementById('modalEditPanel');
+        const deleteBtn = document.getElementById('editDelete');
+        if (deleteBtn) {
+          if (editPanel && editPanel.hidden) editPanel.hidden = false;
+          deleteBtn.click();
+          e.preventDefault();
+        }
+        return;
+      }
+
+      // Zoom controls (+ / - / 0). Only meaningful for images with active zoom.
+      if (this.zoom) {
+        if (e.key === '+' || e.key === '=') { this._nudgeZoom(1.25); e.preventDefault(); return; }
+        if (e.key === '-' || e.key === '_') { this._nudgeZoom(0.8); e.preventDefault(); return; }
+        if (e.key === '0') { this._resetZoom(); e.preventDefault(); return; }
+      }
+
+      // Shortcut help
+      if (e.key === '?' || (e.shiftKey && key === '/')) {
+        this.showShortcutHelp();
+        e.preventDefault();
+      }
     });
 
     let touchStartX = 0;
@@ -728,6 +864,10 @@ const gallery = {
     this.currentModalId = id;
     this._currentModalIndex = this.media.indexOf(item);
     this._currentModalItem = item;
+    // Before we rip the old media out of the DOM, pause any playing video
+    // so audio doesn't briefly leak between prev/next transitions on slow
+    // devices where the innerHTML="" removal is async-ish.
+    container.querySelectorAll('video').forEach(v => { try { v.pause(); } catch {} });
     container.innerHTML = '';
 
     const isVideo = item.type === 'video';
@@ -804,6 +944,10 @@ const gallery = {
 
     if (isVideo) {
       mediaEl.autoplay = true;
+      // playsInline stops iOS from booting into its own full-window
+      // player automatically; the native <video controls> fullscreen
+      // button handles it on demand.
+      mediaEl.playsInline = true;
     } else {
       const zoom = {
         el: mediaEl,
@@ -1066,6 +1210,38 @@ const gallery = {
     this.setupFocusTrap(modal);
     const closeBtn = document.getElementById('modalClose');
     if (closeBtn) closeBtn.focus();
+
+    // Warm the browser cache for the previous and next items so pressing
+    // ← / → feels instant. Uses <link rel="prefetch"> which the browser
+    // schedules at a lower priority — it doesn't fight the current display
+    // image download.
+    this.prefetchModalNeighbors();
+  },
+
+  prefetchModalNeighbors() {
+    if (this._currentModalIndex < 0) return;
+    const neighbors = [
+      this.media[this._currentModalIndex - 1],
+      this.media[this._currentModalIndex + 1],
+    ].filter(Boolean);
+    // Clean up prior prefetch links so head doesn't accumulate on rapid
+    // navigation.
+    document.querySelectorAll('link[data-modal-prefetch]').forEach(n => n.remove());
+    for (const item of neighbors) {
+      if (!item) continue;
+      const url = item.type === 'video'
+        ? (item.thumbnail_url || item.url)
+        : (item.display_url || item.url);
+      if (!url) continue;
+      const link = document.createElement('link');
+      link.rel = 'prefetch';
+      // as=image lets the browser prioritize decode when the neighbor is
+      // eventually shown.
+      link.as = 'image';
+      link.href = url;
+      link.setAttribute('data-modal-prefetch', '1');
+      document.head.appendChild(link);
+    }
   },
 
   closeModal() {
@@ -1231,13 +1407,116 @@ const gallery = {
     });
   },
 
+  _nudgeZoom(factor) {
+    const z = this.zoom;
+    if (!z) return;
+    const next = Math.max(1, Math.min(z.MAX_SCALE, z.scale * factor));
+    if (next === z.scale) return;
+    z.scale = next;
+    if (z.scale <= 1.01) {
+      z.scale = 1; z.x = 0; z.y = 0;
+      z.el.style.cursor = 'zoom-in';
+    } else {
+      z.el.style.cursor = 'grab';
+    }
+    z.el.style.transition = 'transform 0.2s ease';
+    z.el.style.transform = `translate(${z.x}px, ${z.y}px) scale(${z.scale})`;
+  },
+
+  _resetZoom() {
+    const z = this.zoom;
+    if (!z) return;
+    z.scale = 1; z.x = 0; z.y = 0;
+    z.el.style.cursor = 'zoom-in';
+    z.el.style.transition = 'transform 0.2s ease';
+    z.el.style.transform = 'translate(0px, 0px) scale(1)';
+  },
+
+  setupShortcutHelp() {
+    const btn = document.getElementById('shortcutHelpBtn');
+    if (btn) btn.addEventListener('click', () => this.showShortcutHelp());
+  },
+
+  showShortcutHelp() {
+    if (document.getElementById('shortcutHelpOverlay')) return;
+    const isAdmin = document.querySelector('meta[name="user-type"]')?.content === 'admin';
+    const overlay = document.createElement('div');
+    overlay.id = 'shortcutHelpOverlay';
+    overlay.className = 'confirm-overlay';
+    const rows = [
+      ['←', 'Предыдущее медиа'],
+      ['→', 'Следующее медиа'],
+      ['Esc', 'Закрыть модалку'],
+      ['F', 'Избранное'],
+      ['+ / −', 'Увеличить / Уменьшить'],
+      ['0', 'Сбросить зум'],
+      ['?', 'Эта справка'],
+    ];
+    if (isAdmin) {
+      rows.push(['E', 'Открыть редактирование']);
+      rows.push(['Delete', 'Удалить медиа']);
+    }
+    const modal = document.createElement('div');
+    modal.className = 'confirm-modal shortcut-help-modal';
+    const heading = document.createElement('h3');
+    heading.textContent = 'Клавиатурные шорткаты';
+    heading.className = 'shortcut-help-title';
+    modal.appendChild(heading);
+    const list = document.createElement('dl');
+    list.className = 'shortcut-help-list';
+    for (const [key, desc] of rows) {
+      const dt = document.createElement('dt');
+      dt.textContent = key;
+      const dd = document.createElement('dd');
+      dd.textContent = desc;
+      list.append(dt, dd);
+    }
+    modal.appendChild(list);
+    const actions = document.createElement('div');
+    actions.className = 'confirm-actions';
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'btn btn-primary btn-sm';
+    closeBtn.textContent = 'Закрыть';
+    actions.appendChild(closeBtn);
+    modal.appendChild(actions);
+    overlay.appendChild(modal);
+
+    const dismiss = () => overlay.remove();
+    closeBtn.addEventListener('click', dismiss);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) dismiss(); });
+    const onKey = (e) => {
+      if (e.key === 'Escape') { dismiss(); document.removeEventListener('keydown', onKey); }
+    };
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(overlay);
+  },
+
   async navigateModal(direction) {
     if (!this.currentModalId) return;
     // Use the cached index from openModal instead of findIndex. findIndex
     // returns the first match for an id, so duplicates (same id in two slots)
     // would trap the user on a phantom "next" press — see _currentModalIndex.
-    const currentIndex = this._currentModalIndex;
-    if (currentIndex < 0) return;
+    let currentIndex = this._currentModalIndex;
+    // Guard: if this.media was mutated behind the modal's back (filter reset,
+    // batch delete elsewhere), the cached index may point to a different or
+    // now-missing item. Re-resolve via id and warn.
+    if (
+      currentIndex < 0 ||
+      currentIndex >= this.media.length ||
+      !this._currentModalItem ||
+      this.media[currentIndex] !== this._currentModalItem
+    ) {
+      const recovered = this.media.findIndex(m => m.id == this.currentModalId);
+      if (recovered < 0) {
+        console.warn('navigateModal: current item no longer in this.media, closing');
+        this.closeModal();
+        return;
+      }
+      console.warn('navigateModal: modal index desynced, recovering via findIndex');
+      currentIndex = recovered;
+      this._currentModalIndex = recovered;
+      this._currentModalItem = this.media[recovered];
+    }
     const newIndex = currentIndex + direction;
 
     if (newIndex < 0) return;
