@@ -237,15 +237,39 @@ const gallery = {
     const sentinel = document.getElementById('sentinel');
     if (!sentinel) return;
 
-    const observer = new IntersectionObserver((entries) => {
+    // Bigger rootMargin so we start the next request while the user still
+    // has a screen of cards to look at — hides the network latency.
+    this._infiniteObserver = new IntersectionObserver((entries) => {
       entries.forEach(entry => {
         if (entry.isIntersecting && !this.loading && this.hasMore) {
           this.loadMore();
         }
       });
-    }, { rootMargin: '300px' });
+    }, { rootMargin: '800px' });
 
-    observer.observe(sentinel);
+    this._infiniteObserver.observe(sentinel);
+  },
+
+  // IntersectionObserver only fires when the target CROSSES the intersect
+  // boundary — if a page of results is short enough that the sentinel
+  // stayed in view after the load, no further callback ever fires and the
+  // feed appears frozen until the user scrolls up a bit (which re-crosses
+  // the boundary). This runs after every successful loadMore and, if the
+  // sentinel is still in the trigger zone AND we haven't reached the end,
+  // schedules another load. requestAnimationFrame lets layout settle
+  // before we measure geometry.
+  _maybeLoadMoreIfSentinelVisible() {
+    if (!this.hasMore || this.loading) return;
+    const sentinel = document.getElementById('sentinel');
+    if (!sentinel) return;
+    requestAnimationFrame(() => {
+      if (this.loading || !this.hasMore) return;
+      const rect = sentinel.getBoundingClientRect();
+      // Match the observer's rootMargin so behavior is consistent.
+      const TRIGGER = 800;
+      const inTriggerZone = rect.top < window.innerHeight + TRIGGER;
+      if (inTriggerZone) this.loadMore();
+    });
   },
 
   async loadMore() {
@@ -307,6 +331,9 @@ const gallery = {
     } finally {
       this.loading = false;
       if (spinner) spinner.classList.add('hidden');
+      // Cover the "sentinel never re-fires" case — see the doc comment
+      // on _maybeLoadMoreIfSentinelVisible for the details.
+      this._maybeLoadMoreIfSentinelVisible();
     }
   },
 
