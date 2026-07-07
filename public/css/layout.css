@@ -126,22 +126,28 @@
   width: 18px;
   height: 18px;
   transition: opacity 0.2s ease, transform 0.3s ease;
-  display: block;
+}
+/* Match the visual weight of the neighboring navbar icons. Lucide defaults
+   to stroke-width=2; the sun/moon/monitor glyphs read heavier at that
+   width because they have more strokes packed into 18px — dropping to 1.75
+   brings them in line without making them look faded. */
+.navbar-theme-toggle svg {
+  stroke-width: 1.75;
 }
 .navbar-theme-toggle:hover {
   color: var(--text-primary);
   background: var(--surface-hover);
 }
 /* Show only the icon matching the current *preference* (not the resolved
-   theme), so a user who explicitly chose "dark" while their OS is dark
-   still sees the moon (indicating "click to advance to auto"). Falls back
-   to the resolved theme when no preference is stored yet. */
-.navbar-theme-icon { display: none; }
-:root:not([data-theme-pref]) .navbar-theme-icon-auto,
-:root[data-theme-pref="auto"] .navbar-theme-icon-auto,
-:root[data-theme-pref="light"] .navbar-theme-icon-light,
-:root[data-theme-pref="dark"] .navbar-theme-icon-dark {
-  display: block;
+   theme). Hide with !important so the earlier `.navbar-theme-toggle i`
+   rule can't accidentally re-enable them via a later stylesheet reorder
+   — this is the whole point of the tri-state toggle. */
+.navbar-theme-toggle .navbar-theme-icon { display: none !important; }
+:root:not([data-theme-pref]) .navbar-theme-toggle .navbar-theme-icon-auto,
+:root[data-theme-pref="auto"] .navbar-theme-toggle .navbar-theme-icon-auto,
+:root[data-theme-pref="light"] .navbar-theme-toggle .navbar-theme-icon-light,
+:root[data-theme-pref="dark"] .navbar-theme-toggle .navbar-theme-icon-dark {
+  display: block !important;
 }
 
 .navbar-toggle {
