@@ -87,25 +87,6 @@ const MediaController = {
     res.json({ media: mediaWithUrls, total, page: parseInt(page), totalPages: Math.ceil(total / limit) });
   },
 
-  async search(req, res) {
-    const { q, category_id, subcategory_id, age, sort, page = 1, limit = 20 } = req.query;
-    const offset = (page - 1) * limit;
-    const { type, sort: effectiveSort } = resolveSortAndType(sort);
-    const media = await MediaModel.searchWithCount({
-      query: q,
-      categoryId: category_id,
-      subcategoryId: subcategory_id,
-      age,
-      type,
-      sort: effectiveSort,
-      limit: parseInt(limit),
-      offset: parseInt(offset),
-    });
-    const total = media.length > 0 ? parseInt(media[0].total_count, 10) : 0;
-    const mediaWithUrls = await enrichMediaUrls(media, req);
-    res.json({ media: mediaWithUrls, total, page: parseInt(page), totalPages: Math.ceil(total / limit) });
-  },
-
   async getById(req, res) {
     const { id } = req.params;
     const media = await MediaModel.getById(id);

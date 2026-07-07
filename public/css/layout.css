@@ -132,9 +132,17 @@
   color: var(--text-primary);
   background: var(--surface-hover);
 }
-/* Dark mode (default): show sun icon (click to switch to light) */
-:root[data-theme="dark"] .navbar-theme-icon-dark { display: none; }
-:root[data-theme="light"] .navbar-theme-icon-light { display: none; }
+/* Show only the icon matching the current *preference* (not the resolved
+   theme), so a user who explicitly chose "dark" while their OS is dark
+   still sees the moon (indicating "click to advance to auto"). Falls back
+   to the resolved theme when no preference is stored yet. */
+.navbar-theme-icon { display: none; }
+:root:not([data-theme-pref]) .navbar-theme-icon-auto,
+:root[data-theme-pref="auto"] .navbar-theme-icon-auto,
+:root[data-theme-pref="light"] .navbar-theme-icon-light,
+:root[data-theme-pref="dark"] .navbar-theme-icon-dark {
+  display: block;
+}
 
 .navbar-toggle {
   display: none;
@@ -292,8 +300,48 @@
 /* === MEDIA GRID === */
 .media-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 16px;
+  /* Card min-width is driven by --card-min so the density picker can
+     retune the whole grid via one variable. */
+  grid-template-columns: repeat(auto-fill, minmax(var(--card-min, 200px), 1fr));
+  gap: var(--card-gap, 16px);
+}
+
+:root[data-density="comfortable"] .media-grid { --card-min: 240px; --card-gap: 20px; }
+:root[data-density="compact"]     .media-grid { --card-min: 200px; --card-gap: 16px; }
+:root[data-density="dense"]       .media-grid { --card-min: 150px; --card-gap: 10px; }
+
+/* Segmented density control — three iconified buttons in the filter row. */
+.density-picker {
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-height);
+  padding: 3px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  gap: 2px;
+}
+.density-btn {
+  height: 100%;
+  min-width: 32px;
+  padding: 0 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+.density-btn:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+.density-btn.active {
+  color: var(--text-primary);
+  background: var(--surface-active);
 }
 
 .sentinel {
@@ -362,30 +410,53 @@
 }
 
 @media (max-width: 768px) {
+  /* Mobile: navbar stays a top strip (logo + brand only), and the menu
+     items dock as a fixed bottom tab bar. Bottom-nav is the standard
+     pattern for media apps because it keeps thumbs on primary actions. */
   .navbar-menu {
-    display: none;
-    position: absolute;
-    top: 64px;
+    display: flex;
+    position: fixed;
     left: 0;
     right: 0;
-    background: var(--bg-2);
+    bottom: 0;
+    top: auto;
+    background: color-mix(in srgb, var(--bg-1) 88%, transparent);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border-top: 1px solid var(--border);
+    border-bottom: none;
+    flex-direction: row;
+    justify-content: space-around;
+    padding: var(--space-2) var(--space-3) calc(var(--space-2) + env(safe-area-inset-bottom, 0));
+    gap: var(--space-2);
+    z-index: 1000;
+  }
+
+  .navbar-menu .navbar-link {
+    flex: 1;
     flex-direction: column;
-    padding: 16px;
-    border-bottom: 1px solid var(--border);
-    gap: 4px;
-    backdrop-filter: blur(20px);
+    gap: 2px;
+    padding: 6px 4px;
+    font-size: 11px;
+    justify-content: center;
+    text-align: center;
+    min-width: 0;
   }
 
-  .navbar-menu.active {
-    display: flex;
+  .navbar-menu .navbar-link .icon-md {
+    width: 20px;
+    height: 20px;
   }
 
+  /* Bottom nav is always visible on mobile — no hamburger needed. */
   .navbar-toggle {
-    display: flex;
+    display: none;
   }
 
   .page-container {
-    padding: 80px 16px 24px;
+    /* Extra bottom padding so the last row of cards isn't hidden under
+       the fixed bottom-nav. */
+    padding: 80px 16px calc(96px + env(safe-area-inset-bottom, 0));
   }
 
   .page-title {

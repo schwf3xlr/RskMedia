@@ -41,7 +41,6 @@ const upload = multer({
 });
 
 router.get('/', MediaController.getAll);
-router.get('/search', MediaController.search);
 router.get('/:id', MediaController.getById);
 router.post('/upload/single', requireAdmin, uploadLimiter, upload.single('file'), MediaController.uploadSingle);
 router.post('/upload/multiple', requireAdmin, uploadLimiter, upload.array('files', MAX_BATCH_FILES), MediaController.uploadMultiple);

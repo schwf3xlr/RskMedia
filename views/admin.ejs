@@ -119,6 +119,19 @@
           </button>
         </div>
       </form>
+      <div class="batch-progress-summary hidden" id="batchProgressSummary">
+        <div class="batch-progress-header">
+          <span class="batch-progress-count" id="batchProgressCount">0 / 0</span>
+          <span class="batch-progress-eta" id="batchProgressEta"></span>
+          <button type="button" class="btn btn-sm btn-secondary batch-progress-hide" id="batchProgressHide">
+            <i data-lucide="chevron-down" class="icon-sm"></i>
+            Скрыть
+          </button>
+        </div>
+        <div class="batch-progress-bar">
+          <div class="batch-progress-fill" id="batchProgressFill"></div>
+        </div>
+      </div>
       <div class="upload-queue" id="uploadQueue"></div>
     </div>
   </div>

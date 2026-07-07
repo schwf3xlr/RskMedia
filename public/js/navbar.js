@@ -2,36 +2,59 @@
 // non-deferred in head, so the library is already available).
 lucide.createIcons();
 
-// Theme toggle: persists to localStorage and respects prefers-color-scheme
-// on first visit. The current value is already applied to <html> by the
-// inline script in header.ejs before paint, so this just wires up the click.
+// Theme toggle: cycles light → dark → auto and persists the *preference*
+// (not just the resolved theme). "auto" follows prefers-color-scheme live.
+// The resolved theme (dark/light) is applied to <html data-theme>; the
+// user's raw preference (light/dark/auto) lives on <html data-theme-pref>
+// so the toggle button can show the correct icon.
 (function setupThemeToggle() {
   const btn = document.getElementById('themeToggle');
   if (!btn) return;
 
-  btn.addEventListener('click', () => {
-    const current = document.documentElement.getAttribute('data-theme') || 'dark';
-    const next = current === 'dark' ? 'light' : 'dark';
-    document.documentElement.setAttribute('data-theme', next);
+  const PREF_KEY = 'rskmedia-theme';
+  const MQ = window.matchMedia ? window.matchMedia('(prefers-color-scheme: light)') : null;
+
+  function readPref() {
     try {
-      localStorage.setItem('rskmedia-theme', next);
-    } catch (e) {
-      // localStorage might be unavailable in private mode - the toggle
-      // still works for the current session, just won't survive reload.
-    }
-    // Re-render lucide icons so the visible icon swaps (CSS hides the other).
-    lucide.createIcons();
+      const stored = localStorage.getItem(PREF_KEY);
+      if (stored === 'light' || stored === 'dark' || stored === 'auto') return stored;
+    } catch {}
+    return 'auto';
+  }
+
+  function resolve(pref) {
+    if (pref === 'light' || pref === 'dark') return pref;
+    return MQ && MQ.matches ? 'light' : 'dark';
+  }
+
+  function apply(pref) {
+    document.documentElement.setAttribute('data-theme', resolve(pref));
+    document.documentElement.setAttribute('data-theme-pref', pref);
+    // Sync aria-label for accessibility so screen-reader users know
+    // which state they're in.
+    const nextIn = pref === 'light' ? 'тёмную' : pref === 'dark' ? 'авто' : 'светлую';
+    btn.setAttribute('aria-label', `Сменить тему (сейчас: ${pref === 'auto' ? 'авто' : pref === 'light' ? 'светлая' : 'тёмная'}, переключить на ${nextIn})`);
+  }
+
+  apply(readPref());
+
+  btn.addEventListener('click', () => {
+    const cur = readPref();
+    // Cycle order: light → dark → auto → light. Feels intuitive because
+    // dark is the visual "opposite" of light and auto lets the OS decide.
+    const next = cur === 'light' ? 'dark' : cur === 'dark' ? 'auto' : 'light';
+    try { localStorage.setItem(PREF_KEY, next); } catch {}
+    apply(next);
+    if (window.lucide) window.lucide.createIcons();
   });
 
-  // If the user hasn't set a preference yet, follow OS-level changes live.
-  // (If they HAVE set one, we leave them alone.)
-  if (!localStorage.getItem('rskmedia-theme') && window.matchMedia) {
-    const mq = window.matchMedia('(prefers-color-scheme: light)');
-    const onChange = (e) => {
-      document.documentElement.setAttribute('data-theme', e.matches ? 'light' : 'dark');
+  // Follow OS changes ONLY when the user preference is auto (or unset).
+  if (MQ) {
+    const onChange = () => {
+      if (readPref() === 'auto') apply('auto');
     };
-    if (mq.addEventListener) mq.addEventListener('change', onChange);
-    else if (mq.addListener) mq.addListener(onChange);
+    if (MQ.addEventListener) MQ.addEventListener('change', onChange);
+    else if (MQ.addListener) MQ.addListener(onChange);
   }
 })();
 

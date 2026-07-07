@@ -38,6 +38,10 @@ function redirectToLogin(res) {
 const TOKEN_CACHE_TTL_MS = 30 * 1000;
 const TOKEN_CACHE_MAX = 2000;
 const authCache = new Map();
+// Reverse index token_id -> Set<fingerprint>. Lets us evict just the sessions
+// tied to a specific token when admins delete/deactivate it, instead of
+// nuking the whole cache and forcing every logged-in user to re-verify.
+const tokenIdToFingerprints = new Map();
 
 function tokenFingerprint(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
@@ -48,6 +52,7 @@ function getCachedAuth(fp) {
   if (!entry) return null;
   if (entry.expiresAt < Date.now()) {
     authCache.delete(fp);
+    _unlinkFingerprint(fp, entry.result?.token_id);
     return null;
   }
   // LRU touch
@@ -56,16 +61,49 @@ function getCachedAuth(fp) {
   return entry;
 }
 
+function _linkFingerprint(fp, tokenId) {
+  if (!tokenId) return;
+  let set = tokenIdToFingerprints.get(tokenId);
+  if (!set) {
+    set = new Set();
+    tokenIdToFingerprints.set(tokenId, set);
+  }
+  set.add(fp);
+}
+
+function _unlinkFingerprint(fp, tokenId) {
+  if (!tokenId) return;
+  const set = tokenIdToFingerprints.get(tokenId);
+  if (!set) return;
+  set.delete(fp);
+  if (set.size === 0) tokenIdToFingerprints.delete(tokenId);
+}
+
 function setCachedAuth(fp, result) {
   if (authCache.size >= TOKEN_CACHE_MAX) {
     const firstKey = authCache.keys().next().value;
+    const firstEntry = authCache.get(firstKey);
     authCache.delete(firstKey);
+    _unlinkFingerprint(firstKey, firstEntry?.result?.token_id);
   }
   authCache.set(fp, { result, expiresAt: Date.now() + TOKEN_CACHE_TTL_MS });
+  _linkFingerprint(fp, result?.token_id);
 }
 
-function invalidateAuthCache() {
-  authCache.clear();
+// invalidateAuthCache() — clear all entries (used on catastrophic changes).
+// invalidateAuthCache(tokenId) — clear only entries for that token, so
+// deleting/deactivating one token doesn't kick every other logged-in user
+// back through the slow bcrypt path.
+function invalidateAuthCache(tokenId) {
+  if (tokenId === undefined) {
+    authCache.clear();
+    tokenIdToFingerprints.clear();
+    return;
+  }
+  const set = tokenIdToFingerprints.get(tokenId);
+  if (!set) return;
+  for (const fp of set) authCache.delete(fp);
+  tokenIdToFingerprints.delete(tokenId);
 }
 
 async function authenticateToken(req, res, next) {

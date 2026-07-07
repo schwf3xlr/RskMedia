@@ -245,6 +245,59 @@ document.getElementById('batchUploadForm')?.addEventListener('submit', async (e)
   cancelBatchBtn.classList.remove('hidden');
   batchUploadController = new AbortController();
 
+  // Overall progress summary — visible above the per-file queue. Tracks
+  // count, ETA, and offers "hide queue" so long uploads (100 files) don't
+  // hog the whole panel.
+  const summary = document.getElementById('batchProgressSummary');
+  const summaryCount = document.getElementById('batchProgressCount');
+  const summaryEta = document.getElementById('batchProgressEta');
+  const summaryFill = document.getElementById('batchProgressFill');
+  const summaryHide = document.getElementById('batchProgressHide');
+  const totalFiles = files.length;
+  const startedAt = Date.now();
+  const updateSummary = (completedCount) => {
+    if (!summary) return;
+    summaryCount.textContent = `${completedCount} / ${totalFiles}`;
+    summaryFill.style.width = totalFiles ? `${(completedCount / totalFiles) * 100}%` : '0%';
+    if (completedCount > 0 && completedCount < totalFiles) {
+      const elapsed = (Date.now() - startedAt) / 1000;
+      const perItem = elapsed / completedCount;
+      const remaining = Math.round(perItem * (totalFiles - completedCount));
+      summaryEta.textContent = remaining > 0
+        ? `Осталось ~${remaining < 60 ? remaining + 'с' : Math.round(remaining / 60) + 'м'}`
+        : '';
+    } else if (completedCount >= totalFiles) {
+      const total = Math.round((Date.now() - startedAt) / 1000);
+      summaryEta.textContent = `Завершено за ${total < 60 ? total + 'с' : Math.round(total / 60) + 'м'}`;
+    } else {
+      summaryEta.textContent = 'Оценка…';
+    }
+  };
+  if (summary) {
+    summary.classList.remove('hidden');
+    queue.classList.remove('queue-hidden');
+    summary.dataset.queueHidden = 'false';
+  }
+  updateSummary(0);
+
+  const setQueueHidden = (hidden) => {
+    if (!summary) return;
+    queue.classList.toggle('queue-hidden', hidden);
+    summary.dataset.queueHidden = String(hidden);
+    if (summaryHide) {
+      summaryHide.innerHTML = hidden
+        ? '<i data-lucide="chevron-up" class="icon-sm"></i> Показать'
+        : '<i data-lucide="chevron-down" class="icon-sm"></i> Скрыть';
+      lucide.createIcons();
+    }
+  };
+  if (summaryHide) {
+    summaryHide.onclick = () => {
+      const isHidden = summary.dataset.queueHidden === 'true';
+      setQueueHidden(!isHidden);
+    };
+  }
+
   const categoryId = document.getElementById('batchCategory').value;
   const subcategoryId = document.getElementById('batchSubcategory').value;
   const ageRating = document.getElementById('batchAge').value;
@@ -255,9 +308,7 @@ document.getElementById('batchUploadForm')?.addEventListener('submit', async (e)
     item.className = 'queue-item';
     const icon = file.type.startsWith('video') ? 'video' : 'image';
 
-    // Build with DOM APIs to avoid XSS via crafted filenames. The previous
-    // template-string + innerHTML would render "<img onerror=...>" or other
-    // HTML embedded in a filename as actual markup.
+    // Build with DOM APIs to avoid XSS via crafted filenames.
     const iconWrap = document.createElement('div');
     iconWrap.className = 'queue-icon';
     const iconEl = document.createElement('i');
@@ -279,9 +330,18 @@ document.getElementById('batchUploadForm')?.addEventListener('submit', async (e)
     progressFill.className = 'queue-progress-fill';
     progressWrap.appendChild(progressFill);
 
-    item.append(iconWrap, name, status, progressWrap);
+    // Retry button — hidden initially, revealed when this item errors so
+    // the user can rerun just the failed items instead of re-selecting.
+    const retryBtn = document.createElement('button');
+    retryBtn.type = 'button';
+    retryBtn.className = 'btn btn-sm btn-secondary queue-retry hidden';
+    retryBtn.innerHTML = '<i data-lucide="refresh-cw" class="icon-sm"></i>';
+    retryBtn.setAttribute('aria-label', 'Повторить');
+    retryBtn.title = 'Повторить загрузку этого файла';
+
+    item.append(iconWrap, name, status, progressWrap, retryBtn);
     queue.appendChild(item);
-    return { file, item, status, progress: progressFill };
+    return { file, item, status, progress: progressFill, retryBtn };
   });
   lucide.createIcons();
 
@@ -289,60 +349,85 @@ document.getElementById('batchUploadForm')?.addEventListener('submit', async (e)
   let completed = 0;
   let errors = 0;
 
+  const uploadOne = async ({ file, item, status, progress, retryBtn }) => {
+    if (batchUploadController.signal.aborted) return;
+    status.textContent = 'Загрузка...';
+    status.classList.remove('error');
+    progress.classList.remove('error');
+    progress.style.width = '0%';
+    retryBtn.classList.add('hidden');
+    item.classList.remove('queue-item-error');
+
+    const formData = new FormData();
+    formData.append('files', file);
+    if (categoryId) formData.append('category_id', categoryId);
+    if (subcategoryId) formData.append('subcategory_id', subcategoryId);
+    if (ageRating) formData.append('age_rating', ageRating);
+
+    try {
+      await api.upload('/api/media/upload/multiple', formData, {
+        onProgress: (percent) => { progress.style.width = `${percent}%`; },
+        signal: batchUploadController.signal,
+      });
+      progress.style.width = '100%';
+      status.textContent = 'Готово';
+      status.classList.add('done');
+      completed++;
+      updateSummary(completed);
+    } catch (err) {
+      progress.style.width = '100%';
+      progress.classList.add('error');
+      status.textContent = batchUploadController.signal.aborted ? 'Отменено' : 'Ошибка';
+      status.classList.add('error');
+      item.classList.add('queue-item-error');
+      if (!batchUploadController.signal.aborted) {
+        retryBtn.classList.remove('hidden');
+      }
+      errors++;
+    }
+  };
+
+  // Wire retry buttons — invoked ad-hoc after the batch finishes.
+  queueItems.forEach(qi => {
+    qi.retryBtn.addEventListener('click', async () => {
+      if (batchUploadController) return;
+      batchUploadController = new AbortController();
+      cancelBatchBtn.classList.remove('hidden');
+      errors--; // Will be re-incremented on failure, or completed++'d on success.
+      await uploadOne(qi);
+      batchUploadController = null;
+      cancelBatchBtn.classList.add('hidden');
+    });
+  });
+
   try {
     for (let i = 0; i < queueItems.length; i += CONCURRENCY) {
       if (batchUploadController.signal.aborted) break;
       const batch = queueItems.slice(i, i + CONCURRENCY);
-      await Promise.all(batch.map(async ({ file, status, progress }) => {
-        if (batchUploadController.signal.aborted) return;
-        status.textContent = 'Загрузка...';
-
-        const formData = new FormData();
-        formData.append('files', file);
-        if (categoryId) formData.append('category_id', categoryId);
-        if (subcategoryId) formData.append('subcategory_id', subcategoryId);
-        if (ageRating) formData.append('age_rating', ageRating);
-
-        try {
-          await api.upload('/api/media/upload/multiple', formData, {
-            onProgress: (percent) => {
-              progress.style.width = `${percent}%`;
-            },
-            signal: batchUploadController.signal,
-          });
-          progress.style.width = '100%';
-          status.textContent = 'Готово';
-          status.classList.add('done');
-          completed++;
-        } catch (err) {
-          progress.style.width = '100%';
-          progress.classList.add('error');
-          status.textContent = batchUploadController.signal.aborted ? 'Отменено' : 'Ошибка';
-          status.classList.add('error');
-          errors++;
-        }
-      }));
+      await Promise.all(batch.map(uploadOne));
     }
 
-    toast.show(`Загрузка завершена: ${completed} успешно, ${errors} ошибок`);
+    updateSummary(completed);
+    toast.show(`Загрузка завершена: ${completed} успешно, ${errors} ошибок`, errors > 0 ? 'warning' : 'success');
   } catch (err) {
     toast.show(err.message, 'error');
   } finally {
     batchUploadController = null;
     cancelBatchBtn.classList.add('hidden');
     resetBatchDropZone();
-    // Auto-clear the queue items after a short delay so the file-type
-    // icons (image/video) don't linger forever - users reported the icons
-    // staying on screen long after the upload finished.
-    setTimeout(() => {
-      const queue = document.getElementById('uploadQueue');
-      if (!queue) return;
-      // Fade-out then remove
-      queue.querySelectorAll('.queue-item').forEach(item => {
-        item.classList.add('queue-item-removing');
-      });
-      setTimeout(() => { queue.innerHTML = ''; }, 400);
-    }, 5000);
+    // Auto-clear items after 5s IF everything succeeded. If there are
+    // errors, keep the queue visible so the user can hit retry.
+    if (errors === 0) {
+      setTimeout(() => {
+        const q = document.getElementById('uploadQueue');
+        if (!q) return;
+        q.querySelectorAll('.queue-item').forEach(item => item.classList.add('queue-item-removing'));
+        setTimeout(() => {
+          q.innerHTML = '';
+          if (summary) summary.classList.add('hidden');
+        }, 400);
+      }, 5000);
+    }
   }
 });
 
