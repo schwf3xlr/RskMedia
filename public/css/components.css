@@ -380,36 +380,6 @@
   z-index: 1;
 }
 
-/* Video fullscreen button — sits above the video (below top nav) so it
-   doesn't fight the native controls that appear at the bottom. */
-.modal-video-fullscreen {
-  position: absolute;
-  top: 76px;
-  right: 20px;
-  width: 40px;
-  height: 40px;
-  background: var(--overlay-scrim);
-  backdrop-filter: blur(10px);
-  border: 1px solid var(--overlay-hairline);
-  border-radius: 50%;
-  color: white;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: var(--transition);
-  z-index: 10;
-  padding: 0;
-}
-.modal-video-fullscreen:hover {
-  background: var(--overlay-scrim-strong);
-  transform: scale(1.08);
-}
-.modal.idle .modal-video-fullscreen {
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.3s ease;
-}
 
 .modal-close {
   position: absolute;

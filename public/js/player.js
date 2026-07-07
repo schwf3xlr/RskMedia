@@ -944,24 +944,10 @@ const gallery = {
 
     if (isVideo) {
       mediaEl.autoplay = true;
-      // Native controls give us play/pause/seek/mute for free. `playsInline`
-      // stops iOS from booting into its own full-window player before the
-      // user asks for it (fullscreen button below handles that).
+      // playsInline stops iOS from booting into its own full-window
+      // player automatically; the native <video controls> fullscreen
+      // button handles it on demand.
       mediaEl.playsInline = true;
-      // Fullscreen button — overlays top-right of the video. Native
-      // requestFullscreen has vendor prefixes on iOS Safari (webkitEnterFullscreen
-      // on the <video> itself) that we fall back to.
-      const fsBtn = document.createElement('button');
-      fsBtn.type = 'button';
-      fsBtn.className = 'modal-video-fullscreen';
-      fsBtn.setAttribute('aria-label', 'На весь экран');
-      fsBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>';
-      fsBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const req = mediaEl.requestFullscreen || mediaEl.webkitRequestFullscreen || mediaEl.webkitEnterFullscreen;
-        if (req) req.call(mediaEl).catch(() => {});
-      });
-      wrapper.appendChild(fsBtn);
     } else {
       const zoom = {
         el: mediaEl,
