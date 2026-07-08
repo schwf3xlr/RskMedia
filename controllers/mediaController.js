@@ -7,10 +7,14 @@ const { createReadStream } = require('fs');
 const { Upload } = require('@aws-sdk/lib-storage');
 const { v4: uuidv4 } = require('uuid');
 const MediaModel = require('../models/media');
-const { deleteFromS3, getSignedUrlForKey, s3Client, bucket } = require('../config/s3');
+const { deleteFromS3, s3Client, bucket } = require('../config/s3');
 const { validateFileType } = require('../helpers/fileValidator');
 const { getExtensionFromMimeType } = require('../helpers/mime');
-const { SIGN_URL_EXPIRES, TYPE_SORT_MAP } = require('../config/constants');
+const { enrichOne, enrichMany } = require('../helpers/enrichUrls');
+const { TYPE_SORT_MAP } = require('../config/constants');
+const env = require('../config/env');
+const sseBroker = require('../helpers/sseBroker');
+const logger = require('../helpers/logger');
 const db = require('../config/database');
 
 const UPLOAD_CONCURRENCY = 3;
@@ -28,46 +32,6 @@ function resolveSortAndType(sort) {
 // Tune sharp cache for media-heavy workload
 sharp.cache({ memory: 100, items: 200, files: 0 });
 
-function proxyUrl(req, type, id) {
-  return `${req.protocol}://${req.get('host')}/media/${type}/${id}`;
-}
-
-const USE_PROXY = process.env.USE_MEDIA_PROXY !== 'false';
-
-function enrichProxyUrls(m, req) {
-  const result = {
-    ...m,
-    url: proxyUrl(req, 'original', m.id),
-    thumbnail_url: proxyUrl(req, 'thumb', m.id),
-  };
-  if (m.display_s3_key) {
-    result.display_url = proxyUrl(req, 'display', m.id);
-  }
-  return result;
-}
-
-async function enrichItemWithSignedUrls(m) {
-  const [url, thumbnail_url, display_url] = await Promise.all([
-    getSignedUrlForKey(m.s3_key, SIGN_URL_EXPIRES),
-    getSignedUrlForKey(m.thumbnail_s3_key, SIGN_URL_EXPIRES),
-    m.display_s3_key ? getSignedUrlForKey(m.display_s3_key, SIGN_URL_EXPIRES) : null,
-  ]);
-  return { ...m, url, thumbnail_url, display_url };
-}
-
-async function enrichMediaUrls(media, req) {
-  return Promise.all(
-    media.map(m => USE_PROXY
-      ? Promise.resolve(enrichProxyUrls(m, req))
-      : enrichItemWithSignedUrls(m))
-  );
-}
-
-async function getByIdUrls(media, req) {
-  if (USE_PROXY) return enrichProxyUrls(media, req);
-  return enrichItemWithSignedUrls(media);
-}
-
 const MediaController = {
   async getAll(req, res) {
     const { category_id, subcategory_id, age, sort, page = 1, limit = 20 } = req.query;
@@ -83,7 +47,7 @@ const MediaController = {
       offset: parseInt(offset),
     });
     const total = media.length > 0 ? parseInt(media[0].total_count, 10) : 0;
-    const mediaWithUrls = await enrichMediaUrls(media, req);
+    const mediaWithUrls = await enrichMany(media, req);
     res.json({ media: mediaWithUrls, total, page: parseInt(page), totalPages: Math.ceil(total / limit) });
   },
 
@@ -91,7 +55,7 @@ const MediaController = {
     const { id } = req.params;
     const media = await MediaModel.getById(id);
     if (!media) return res.status(404).json({ error: 'Media not found' });
-    const enriched = await getByIdUrls(media, req);
+    const enriched = await enrichOne(media, req);
     res.json(enriched);
   },
 
@@ -101,9 +65,10 @@ const MediaController = {
 
     try {
       const result = await processFile(file, req.body);
+      sseBroker.publishBroadcast('media.created', { id: result.id });
       res.status(201).json(result);
     } catch (err) {
-      console.error('Upload error:', err);
+      logger.error({ err, file: file.originalname }, 'Upload error');
       res.status(err.status || 500).json({ error: err.message || 'Upload failed' });
     } finally {
       await cleanupTempFiles([file.path]);
@@ -128,7 +93,7 @@ const MediaController = {
             const result = await processFile(file, { category_id, subcategory_id, age_rating });
             return { ok: result };
           } catch (err) {
-            console.error(`Batch upload item error (${file.originalname}):`, err.message);
+            logger.error({ err, file: file.originalname }, 'Batch upload item error');
             return { err: { file: file.originalname, error: err.message } };
           }
         })
@@ -141,6 +106,9 @@ const MediaController = {
       await Promise.all(batch.map(f => cleanupTempFiles([f.path])));
     }
 
+    if (results.length > 0) {
+      sseBroker.publishBroadcast('media.created', { ids: results.map(r => r.id) });
+    }
     res.status(201).json({ uploaded: results.length, errors: errors.length, media: results, errorDetails: errors });
   },
 
@@ -189,6 +157,7 @@ const MediaController = {
       );
     });
 
+    sseBroker.publishBroadcast('media.updated', { ids });
     res.json({ message: 'Batch update completed', updated: ids.length });
   },
 
@@ -201,8 +170,10 @@ const MediaController = {
 
     const deletePromises = [deleteFromS3(media.s3_key), deleteFromS3(media.thumbnail_s3_key)];
     if (media.display_s3_key) deletePromises.push(deleteFromS3(media.display_s3_key));
+    if (media.preview_s3_key) deletePromises.push(deleteFromS3(media.preview_s3_key));
     await Promise.all(deletePromises);
 
+    sseBroker.publishBroadcast('media.deleted', { ids: [Number(id)] });
     res.json({ message: 'Media deleted' });
   },
 
@@ -213,7 +184,7 @@ const MediaController = {
     }
 
     const rows = await db.query(
-      'SELECT id, s3_key, thumbnail_s3_key, display_s3_key FROM media WHERE id = ANY($1::int[])',
+      'SELECT id, s3_key, thumbnail_s3_key, display_s3_key, preview_s3_key FROM media WHERE id = ANY($1::int[])',
       [ids]
     );
 
@@ -224,9 +195,11 @@ const MediaController = {
       allDeletes.push(deleteFromS3(m.s3_key));
       allDeletes.push(deleteFromS3(m.thumbnail_s3_key));
       if (m.display_s3_key) allDeletes.push(deleteFromS3(m.display_s3_key));
+      if (m.preview_s3_key) allDeletes.push(deleteFromS3(m.preview_s3_key));
     }
     await Promise.all(allDeletes);
 
+    sseBroker.publishBroadcast('media.deleted', { ids: rows.rows.map(r => r.id) });
     res.json({ message: 'Batch delete completed', deleted: rows.rows.length });
   },
 };
@@ -248,8 +221,8 @@ async function streamToS3(key, filePath, contentType) {
 }
 
 async function processFile(file, { category_id, subcategory_id, age_rating } = {}) {
-  const MAX_PHOTO_SIZE = (parseInt(process.env.MAX_PHOTO_SIZE_MB, 10) || 50) * 1024 * 1024;
-  const MAX_VIDEO_SIZE = (parseInt(process.env.MAX_VIDEO_SIZE_MB, 10) || 500) * 1024 * 1024;
+  const MAX_PHOTO_SIZE = env.UPLOAD.MAX_PHOTO_SIZE_MB * 1024 * 1024;
+  const MAX_VIDEO_SIZE = env.UPLOAD.MAX_VIDEO_SIZE_MB * 1024 * 1024;
   const isImage = file.mimetype.startsWith('image/');
   const maxSize = isImage ? MAX_PHOTO_SIZE : MAX_VIDEO_SIZE;
 
@@ -266,6 +239,7 @@ async function processFile(file, { category_id, subcategory_id, age_rating } = {
   const s3Key = `media/${mediaId}${ext}`;
   const thumbnailKey = `thumbnails/${mediaId}_thumb.jpg`;
   const displayKey = isImage ? `display/${mediaId}_display.jpg` : null;
+  const previewKey = isImage ? null : `previews/${mediaId}_preview.webp`;
   const filePath = file.path;
 
   let buffer = null;
@@ -285,25 +259,39 @@ async function processFile(file, { category_id, subcategory_id, age_rating } = {
     await validateVideoFile(filePath);
   }
 
-  // Generate thumbnail + display in parallel for images
+  // Generate thumbnail + display in parallel for images.
+  // For videos, thumbnail + animated preview both come from the same source
+  // file, so we run them together.
   let thumbnailBuffer;
   let displayBuffer = null;
+  let previewBuffer = null;
   if (isImage) {
     [thumbnailBuffer, displayBuffer] = await Promise.all([
       sharp(buffer).resize(400, null, { withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer(),
       sharp(buffer).resize(1920, 1920, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer(),
     ]);
   } else {
+    // Preview generation can fail on codecs ffmpeg refuses (rare) — treat it
+    // as best-effort so the upload still lands. Thumbnail failure IS fatal,
+    // because gallery cards require it.
     thumbnailBuffer = await generateVideoThumbnail(filePath);
+    try {
+      previewBuffer = await generateVideoPreview(filePath);
+    } catch (err) {
+      logger.warn({ err: err.message, file: file.originalname }, 'video preview generation failed');
+    }
   }
 
-  // Upload original + thumbnail + display in parallel
+  // Upload original + thumbnail + display/preview in parallel
   const uploadOps = [
     streamToS3(s3Key, filePath, file.mimetype),
     uploadBufferToS3(thumbnailKey, thumbnailBuffer, 'image/jpeg'),
   ];
   if (displayBuffer && displayKey) {
     uploadOps.push(uploadBufferToS3(displayKey, displayBuffer, 'image/jpeg'));
+  }
+  if (previewBuffer && previewKey) {
+    uploadOps.push(uploadBufferToS3(previewKey, previewBuffer, 'image/webp'));
   }
   await Promise.all(uploadOps);
 
@@ -312,13 +300,14 @@ async function processFile(file, { category_id, subcategory_id, age_rating } = {
     s3Key,
     thumbnailS3Key: thumbnailKey,
     displayS3Key: displayKey,
+    previewS3Key: previewBuffer ? previewKey : null,
     fileSize,
     categoryId: category_id || null,
     subcategoryId: subcategory_id || null,
     ageRating: age_rating || null,
   });
 
-  return await getByIdUrls(media, { protocol: 'http', get: () => 'localhost' });
+  return await enrichOne(media, { protocol: 'http', get: () => 'localhost' });
 }
 
 async function uploadBufferToS3(key, buffer, contentType) {
@@ -370,4 +359,46 @@ async function generateVideoThumbnail(videoPath) {
   });
 }
 
+// 5-second animated WebP shown on hover in the gallery card. Samples 10fps
+// (light on the eyes, keeps file size in the 30-80KB range for most clips)
+// and scales width to 400px to match card size. `-loop 0` is default for
+// libwebp anim; explicit here as documentation.
+async function generateVideoPreview(videoPath) {
+  const previewPath = videoPath + '_preview.webp';
+  return new Promise((resolve, reject) => {
+    ffmpeg(videoPath)
+      .noAudio()
+      .setStartTime(0)
+      .setDuration(5)
+      .outputOptions([
+        '-vf', 'scale=400:-2,fps=10',
+        '-c:v', 'libwebp',
+        '-lossless', '0',
+        '-compression_level', '4',
+        '-q:v', '55',
+        '-loop', '0',
+        '-an', '-vsync', '0',
+      ])
+      .output(previewPath)
+      .on('end', async () => {
+        try {
+          const buffer = await fs.readFile(previewPath);
+          await fs.unlink(previewPath).catch(() => {});
+          resolve(buffer);
+        } catch (err) {
+          reject(err);
+        }
+      })
+      .on('error', async (err) => {
+        await fs.unlink(previewPath).catch(() => {});
+        reject(err);
+      })
+      .run();
+  });
+}
+
 module.exports = MediaController;
+// Exposed for zipUploadController — it reuses the same photo/video processing
+// pipeline as the multipart endpoints (validation, thumbnail, preview, S3
+// upload, DB insert) instead of forking a parallel copy.
+module.exports.processFile = processFile;

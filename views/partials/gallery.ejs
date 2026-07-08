@@ -37,6 +37,12 @@
         <i data-lucide="x" class="icon-md"></i>
         Сбросить
       </button>
+      <% if (typeof activePage !== 'undefined' && activePage === 'favorites') { %>
+      <a class="btn btn-secondary" id="exportFavorites" href="/api/favorites/export" download title="Скачать избранное zip-архивом">
+        <i data-lucide="download" class="icon-md"></i>
+        Скачать zip
+      </a>
+      <% } %>
       <div class="density-picker" role="radiogroup" aria-label="Плотность сетки">
         <button class="density-btn" data-density="comfortable" aria-label="Просторно" title="Просторно">
           <i data-lucide="layout-grid" class="icon-sm"></i>

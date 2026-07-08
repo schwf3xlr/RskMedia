@@ -107,10 +107,10 @@ const MediaModel = {
     return result.rows[0];
   },
 
-  async create({ type, s3Key, thumbnailS3Key, displayS3Key, fileSize, categoryId, subcategoryId, ageRating }) {
+  async create({ type, s3Key, thumbnailS3Key, displayS3Key, previewS3Key, fileSize, categoryId, subcategoryId, ageRating }) {
     const result = await db.query(
-      'INSERT INTO media (type, s3_key, thumbnail_s3_key, display_s3_key, file_size, category_id, subcategory_id, age_rating) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
-      [type, s3Key, thumbnailS3Key, displayS3Key || null, fileSize || null, categoryId, subcategoryId, ageRating]
+      'INSERT INTO media (type, s3_key, thumbnail_s3_key, display_s3_key, preview_s3_key, file_size, category_id, subcategory_id, age_rating) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *',
+      [type, s3Key, thumbnailS3Key, displayS3Key || null, previewS3Key || null, fileSize || null, categoryId, subcategoryId, ageRating]
     );
     return result.rows[0];
   },
@@ -123,7 +123,7 @@ const MediaModel = {
     // to the wrong column.
     const ALLOWED_MEDIA_FIELDS = [
       'category_id', 'subcategory_id', 'age_rating',
-      's3_key', 'thumbnail_s3_key', 'display_s3_key', 'phash',
+      's3_key', 'thumbnail_s3_key', 'display_s3_key', 'preview_s3_key', 'phash',
     ];
     const fields = [];
     const values = [];

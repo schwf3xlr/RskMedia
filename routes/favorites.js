@@ -5,6 +5,7 @@ const FavoritesController = require('../controllers/favoritesController');
 const { validate } = require('../middleware/validate');
 
 router.get('/', FavoritesController.getAll);
+router.get('/export', FavoritesController.exportZip);
 router.post('/batch-check', [
   body('ids').isArray({ min: 1, max: 500 }).withMessage('ids must be an array'),
   body('ids.*').isInt().withMessage('Each id must be an integer'),

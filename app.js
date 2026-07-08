@@ -1,12 +1,16 @@
+// env must be required first — it validates required vars (S3_*, JWT_SECRET,
+// COOKIE_SECRET) at load time and fails fast if any are missing/too weak.
+const env = require('./config/env');
 const express = require('express');
 const path = require('path');
-const dotenv = require('dotenv');
 const helmet = require('helmet');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const compression = require('compression');
 const morgan = require('morgan');
 const initDatabase = require('./scripts/init-db');
+const logger = require('./helpers/logger');
+const ApiError = require('./helpers/apiError');
 const { authenticateToken } = require('./middleware/auth');
 const { requireAdmin } = require('./middleware/admin');
 const { csrfProtection, csrfTokenMiddleware, csrfTokenEndpoint } = require('./middleware/csrf');
@@ -15,18 +19,32 @@ const { AGE_RATINGS } = require('./config/constants');
 const { apiLimiter } = require('./middleware/rateLimiter');
 const dbPool = require('./config/database').pool;
 
-dotenv.config();
-
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = env.PORT;
 
-// Trust proxy only when enabled
-if (process.env.TRUST_PROXY) {
-  app.set('trust proxy', parseInt(process.env.TRUST_PROXY, 10) || 1);
+if (env.TRUST_PROXY !== null) {
+  app.set('trust proxy', env.TRUST_PROXY);
 }
 
 // Security middleware
+//
+// S3 endpoint is served as media URLs when USE_MEDIA_PROXY=false (direct
+// signed URLs to the bucket). Extract the origin so we can whitelist just
+// that host in img-src/media-src instead of the whole https: scheme —
+// otherwise a script that manages to inject an <img src=…> can exfiltrate
+// data to any HTTPS host by abusing the browser's image loader.
+function s3Origin() {
+  try {
+    return new URL(env.S3.ENDPOINT).origin;
+  } catch {
+    return null;
+  }
+}
+const S3_ORIGIN = s3Origin();
+
 function buildCspDirectives(res) {
+  const mediaHosts = ["'self'", "data:", "blob:"];
+  if (S3_ORIGIN) mediaHosts.push(S3_ORIGIN);
   return {
     defaultSrc: ["'self'"],
     scriptSrc: ["'self'", `'nonce-${res.locals.nonce}'`],
@@ -37,8 +55,8 @@ function buildCspDirectives(res) {
     // explicitly locks the behavior in place.
     styleSrcAttr: ["'unsafe-inline'"],
     fontSrc: ["'self'", "https://fonts.gstatic.com"],
-    imgSrc: ["'self'", "data:", "blob:", "https:"],
-    mediaSrc: ["'self'", "https:"],
+    imgSrc: mediaHosts,
+    mediaSrc: mediaHosts.filter(h => h !== "data:"),
     connectSrc: ["'self'"],
     frameSrc: ["'none'"],
     objectSrc: ["'none'"],
@@ -47,11 +65,20 @@ function buildCspDirectives(res) {
   };
 }
 
-app.use(cookieParser(process.env.COOKIE_SECRET || process.env.JWT_SECRET));
+app.use(cookieParser(env.COOKIE_SECRET));
 app.use(csrfTokenMiddleware);
 app.use(nonceMiddleware);
 app.use((req, res, next) => {
   res.locals.AGE_RATINGS = AGE_RATINGS;
+  // Client-facing constants exposed via <meta> in header.ejs so the
+  // frontend doesn't fork the numbers out of sync with config/constants.js.
+  res.locals.CLIENT_CONFIG = {
+    ageRatings: AGE_RATINGS,
+    maxPhotoSizeMb: env.UPLOAD.MAX_PHOTO_SIZE_MB,
+    maxVideoSizeMb: env.UPLOAD.MAX_VIDEO_SIZE_MB,
+    maxFileSizeMb: env.UPLOAD.MAX_FILE_SIZE_MB,
+    maxBatchFiles: env.UPLOAD.MAX_BATCH_FILES,
+  };
   next();
 });
 
@@ -65,6 +92,12 @@ app.use((req, res, next) => {
     crossOriginEmbedderPolicy: false,
     crossOriginOpenerPolicy: false,
     crossOriginResourcePolicy: false,
+    // HSTS only makes sense over HTTPS. In dev this header on a
+    // localhost:3000 (HTTP) response confuses browsers into refusing to
+    // load the site later on the same host over HTTP.
+    strictTransportSecurity: env.isProd
+      ? { maxAge: 31536000, includeSubDomains: true, preload: false }
+      : false,
   })(req, res, next);
 });
 
@@ -91,8 +124,34 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Static files
 app.use(express.static(path.join(__dirname, 'public'), {
-  maxAge: process.env.NODE_ENV === 'production' ? '1d' : 0,
+  maxAge: env.isProd ? '1d' : 0,
 }));
+
+// Health check — probed by reverse proxy / k8s / uptime monitor. Returns
+// 200 only when both dependencies (Postgres + S3) respond within the
+// timeout; 503 otherwise so the orchestrator can pull the pod out of
+// rotation instead of returning 500s to real users. HEAD on the bucket is
+// cheap (no body transfer) and validates credentials + network path.
+const { HeadBucketCommand } = require('@aws-sdk/client-s3');
+const { s3Client, bucket } = require('./config/s3');
+app.get('/health', async (req, res) => {
+  const checks = { db: false, s3: false };
+  const start = Date.now();
+  try {
+    await Promise.all([
+      dbPool.query('SELECT 1').then(() => { checks.db = true; }),
+      s3Client.send(new HeadBucketCommand({ Bucket: bucket })).then(() => { checks.s3 = true; }),
+    ]);
+    res.json({ status: 'ok', checks, elapsedMs: Date.now() - start });
+  } catch (err) {
+    res.status(503).json({
+      status: 'unhealthy',
+      checks,
+      error: err.message,
+      elapsedMs: Date.now() - start,
+    });
+  }
+});
 
 // Media proxy — serves S3 media through local server (avoids CORS/firewall
 // issues on phone). Gated behind auth so anyone on the LAN can't hit
@@ -136,6 +195,14 @@ app.set('views', path.join(__dirname, 'views'));
 // CSRF failures).
 app.get('/api/csrf-token', csrfTokenEndpoint);
 
+// SSE stream for realtime updates: auth.revoked (new login from another
+// device), media.created / media.updated / media.deleted (gallery reactivity
+// without polling). Auth-gated so a stranger on the LAN can't listen.
+const sseBroker = require('./helpers/sseBroker');
+app.get('/api/events', authenticateToken, (req, res) => {
+  sseBroker.attach(res, req.user.token_id);
+});
+
 // API Routes
 app.use('/api/auth', csrfProtection, require('./routes/auth'));
 app.use('/api/media', apiLimiter, authenticateToken, csrfProtection, require('./routes/media'));
@@ -149,11 +216,11 @@ app.get('/login', (req, res) => {
 });
 
 app.get('/', authenticateToken, (req, res) => {
-  res.render('main', { title: 'RskMedia - Галерея', user: req.user });
+  res.render('page', { title: 'RskMedia - Галерея', user: req.user, activePage: 'home' });
 });
 
 app.get('/favorites', authenticateToken, (req, res) => {
-  res.render('favorites', { title: 'Избранное - RskMedia', user: req.user });
+  res.render('page', { title: 'Избранное - RskMedia', user: req.user, activePage: 'favorites' });
 });
 
 app.get('/admin', authenticateToken, requireAdmin, (req, res) => {
@@ -170,26 +237,37 @@ app.use((req, res) => {
 
 // Error handling
 app.use((err, req, res, next) => {
-  console.error('Error:', err);
-  const status = err.status || 500;
-  const message = process.env.NODE_ENV === 'production' ? 'Something went wrong' : err.message;
+  const isApi = req.path.startsWith('/api/');
+  const isKnown = err && err.isApiError === true;
+  const status = err?.status || 500;
 
-  if (req.path.startsWith('/api/')) {
-    return res.status(status).json({ error: message });
+  // Log known 4xx errors at debug (they're operator-visible via response
+  // status codes already); unknown/500s at error with a stack trace.
+  if (isKnown && status < 500) {
+    logger.debug({ err, path: req.path, status }, 'API error');
+  } else {
+    logger.error({ err, path: req.path, status }, 'Unhandled error');
+  }
+
+  // Only leak the raw error message to clients when it's an intentional
+  // ApiError (message was chosen deliberately) or we're not in production.
+  const message = isKnown || !env.isProd
+    ? (err?.message || 'Something went wrong')
+    : 'Something went wrong';
+  const code = isKnown ? err.code : null;
+
+  if (isApi) {
+    const body = { error: message };
+    if (code) body.code = code;
+    return res.status(status).json(body);
   }
 
   res.status(status).render('error', { title: 'Ошибка', message, user: req.user || null });
 });
 
 async function start() {
-  if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
-    console.error('JWT_SECRET is not set or too weak. Set a strong JWT_SECRET in .env');
-    process.exit(1);
-  }
-  if (!process.env.COOKIE_SECRET || process.env.COOKIE_SECRET.length < 32) {
-    console.error('COOKIE_SECRET is not set or too weak. Set a strong COOKIE_SECRET in .env');
-    process.exit(1);
-  }
+  // Required env vars are validated inside config/env.js at load time.
+  // If we got this far, JWT_SECRET / COOKIE_SECRET / S3_* are all present.
   try {
     await initDatabase();
     const server = app.listen(PORT, '0.0.0.0', () => {
@@ -201,13 +279,13 @@ async function start() {
           break;
         }
       }
-      console.log(`Server running on port ${PORT} [${process.env.NODE_ENV || 'undefined'}]`);
-      console.log(`Local:   http://localhost:${PORT}`);
-      console.log(`Network: http://${localIP}:${PORT}`);
+      logger.info({ port: PORT, env: env.NODE_ENV, localIP }, `Server running`);
+      logger.info(`Local:   http://localhost:${PORT}`);
+      logger.info(`Network: http://${localIP}:${PORT}`);
     });
     registerGracefulShutdown(server);
   } catch (err) {
-    console.error('Failed to start server:', err);
+    logger.fatal({ err }, 'Failed to start server');
     process.exit(1);
   }
 }
@@ -222,26 +300,29 @@ function registerGracefulShutdown(server) {
   async function shutdown(signal) {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log(`\n${signal} received, shutting down gracefully...`);
+    logger.info({ signal }, 'received, shutting down gracefully');
 
     // Force-exit watchdog: if cleanup stalls (hung upload, etc.) we still
     // exit eventually so the process supervisor doesn't have to SIGKILL.
+    // Timeout is configurable via SHUTDOWN_TIMEOUT_MS — bump it when in-
+    // flight batch uploads routinely exceed the default (a 100-file batch
+    // can take longer than 15s to finish streaming to S3).
     const forceExitTimer = setTimeout(() => {
-      console.error('Graceful shutdown timed out after 15s, forcing exit');
+      console.error(`Graceful shutdown timed out after ${env.SHUTDOWN_TIMEOUT_MS}ms, forcing exit`);
       process.exit(1);
-    }, 15000);
+    }, env.SHUTDOWN_TIMEOUT_MS);
     forceExitTimer.unref();
 
     try {
       // 1. Stop accepting new connections. Existing requests continue.
       await new Promise((resolve) => server.close(resolve));
-      console.log('HTTP server closed');
+      logger.info('HTTP server closed');
 
       // 2. Drain in-flight S3 multipart uploads / open DB queries.
       await dbPool.end();
-      console.log('DB pool drained');
+      logger.info('DB pool drained');
     } catch (err) {
-      console.error('Error during shutdown:', err);
+      logger.error({ err }, 'Error during shutdown');
     } finally {
       clearTimeout(forceExitTimer);
       process.exit(0);
@@ -255,10 +336,10 @@ function registerGracefulShutdown(server) {
   // silently. Log + continue for now (the supervisor will restart on real
   // crashes via process.exit in uncaughtException below).
   process.on('unhandledRejection', (reason) => {
-    console.error('Unhandled promise rejection:', reason);
+    logger.error({ reason }, 'Unhandled promise rejection');
   });
   process.on('uncaughtException', (err) => {
-    console.error('Uncaught exception:', err);
+    logger.fatal({ err }, 'Uncaught exception');
     // Give the logger a tick to flush, then exit so the supervisor restarts
     // a clean process (avoids undefined state after a synchronous throw).
     setImmediate(() => process.exit(1));

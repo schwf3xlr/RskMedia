@@ -81,6 +81,23 @@ RskMedia — это приложение на Node.js / Express, которое 
 
 - Инициализация базы с идемпотентными миграциями (`scripts/init-db.js`)
 - Первоначальный бутстрап: создаёт токен админа и однократно печатает его plaintext в консоль
+- Health-check `GET /health` — параллельно проверяет `SELECT 1` и `HEAD` S3-бакета, отдаёт 200/503 для reverse-proxy / k8s
+- Graceful shutdown с настраиваемым тайм-аутом (`SHUTDOWN_TIMEOUT_MS`)
+- Централизованный `config/env.js` с валидацией обязательных переменных при старте (`JWT_SECRET`, `COOKIE_SECRET`, `S3_*`)
+
+### Realtime и уведомления (SSE)
+
+`GET /api/events` — Server-Sent Events с автопереподключением. Клиент получает:
+
+- `auth.revoked` — токен инвалидирован новым логином с другого устройства (показывается toast + редирект на `/login`)
+- `media.created` / `media.updated` / `media.deleted` — галерея дебаунсит и перезагружает страницу без F5
+- `zip.progress` — прогресс распаковки/обработки ZIP-архива в админке
+
+### Новые операции с медиа
+
+- ZIP-загрузка: `POST /api/admin/upload-zip` принимает `.zip`, распаковывает в tmp, пропускает каждый файл через тот же pipeline что и обычная загрузка, отправляет прогресс через SSE
+- Анимированное превью для видео: при загрузке `ffmpeg` генерирует 5-секундный `webp` (10 fps, ~50 KB), показывается на hover в карточке
+- Экспорт избранного: `GET /api/favorites/export` — потоковый zip-архив с оригиналами всех избранных медиа
 
 ---
 
@@ -99,9 +116,11 @@ RskMedia — это приложение на Node.js / Express, которое 
 | Обработка видео | `fluent-ffmpeg` — валидация (`ffprobe`) и извлечение превью |
 | Загрузки | `multer` — дисковое хранилище с лимитами размера |
 | Аутентификация | `jsonwebtoken` + `bcryptjs` |
-| Безопасность | `helmet` (CSP с nonce), `express-rate-limit`, собственный CSRF-middleware |
-| Логирование | `morgan` |
+| Безопасность | `helmet` (CSP с nonce, HSTS в prod), `express-rate-limit`, собственный CSRF-middleware |
+| Логирование | `pino` (JSON в prod, pino-pretty в dev), `morgan` для HTTP |
 | Сжатие | `compression` (gzip) |
+| Realtime | Собственный SSE-брокер (`helpers/sseBroker.js`) |
+| ZIP-загрузка / экспорт | `unzipper` (загрузка архива), `archiver` (экспорт избранного) |
 
 ### Фронтенд
 
@@ -166,14 +185,16 @@ RskMedia/
 │
 ├── config/
 │   ├── constants.js             SORT_MAP, AGE_RATINGS, SIGN_URL_EXPIRES
+│   ├── env.js                   Централизованный env-loader с валидацией
 │   ├── database.js              pg.Pool + хелперы query/transaction
 │   └── s3.js                    S3-клиент, LRU-кеш signed URL, getObjectStream
 │
 ├── controllers/
-│   ├── authController.js        Логин по токену, логаут (отзыв JWT-хеша)
+│   ├── authController.js        Логин по токену, логаут (отзыв JWT-хеша), SSE auth.revoked
 │   ├── mediaController.js       Список, поиск, загрузка (single+batch), update, delete
 │   ├── categoryController.js    CRUD категорий и подкатегорий
-│   ├── favoritesController.js   Добавить, удалить, проверить, batch-check
+│   ├── favoritesController.js   Добавить, удалить, проверить, batch-check, экспорт zip
+│   ├── zipUploadController.js   Распаковка загруженного ZIP через unzipper
 │   └── adminController.js       Токены, статистика, бэкап/восстановление, поиск дубликатов
 │
 ├── middleware/
@@ -201,19 +222,23 @@ RskMedia/
 │
 ├── helpers/
 │   ├── mime.js                  Соответствие MIME → расширение
-│   └── fileValidator.js         Валидация magic bytes контента
+│   ├── fileValidator.js         Валидация magic bytes контента
+│   ├── enrichUrls.js            Общий enrich media rows → { url, thumbnail_url, ... }
+│   ├── sseBroker.js             In-process pub/sub для Server-Sent Events
+│   ├── logger.js                pino-логгер (JSON в prod, pretty в dev)
+│   ├── apiError.js              Типизированные ApiError с фабриками
+│   └── asyncHandler.js          Обёртка вокруг async-роутов
 │
 ├── scripts/
 │   └── init-db.js               CREATE TABLE миграции + сидинг токена админа
 │
 ├── views/
-│   ├── main.ejs                 Страница галереи
+│   ├── page.ejs                 Общий шаблон для / и /favorites (различаются через activePage)
 │   ├── login.ejs                Страница логина по токену
-│   ├── favorites.ejs            Страница избранного
-│   ├── admin.ejs                Админ-панель (7 вкладок)
+│   ├── admin.ejs                Админ-панель (7 вкладок, включая ZIP-загрузку)
 │   ├── error.ejs                Универсальная страница ошибки / 404
 │   └── partials/
-│       ├── header.ejs           <head>, lucide, RSK_USER_TYPE, csrf-token meta
+│       ├── header.ejs           <head>, lucide, csrf-token + app-config meta
 │       ├── navbar.ejs           Фиксированная навигация с учётом роли
 │       ├── footer.ejs           Закрытие body + footer.js
 │       └── gallery.ejs          Фильтры, сетка медиа, модалка, панель редактирования
@@ -339,6 +364,8 @@ Network: http://192.168.x.x:3000
 
 ### Загрузки
 
+*(добавлена ZIP-загрузка; ограничение архива — `MAX_FILE_SIZE_MB × MAX_BATCH_FILES`)*
+
 | Переменная | По умолчанию | Назначение |
 |------------|--------------|------------|
 | `MAX_FILE_SIZE_MB` | `500` | Жёсткий лимит на размер одного файла |
@@ -353,6 +380,7 @@ Network: http://192.168.x.x:3000
 | `API_RATE_LIMIT` | `300` | Запросов на окно для `/api/*` (не-admin) |
 | `UPLOAD_RATE_LIMIT` | `50` | Запросов на окно для эндпоинтов загрузки |
 | `ADMIN_RATE_LIMIT` | `200` | Запросов на окно для админ-эндпоинтов |
+| `AUTH_RATE_LIMIT` | `20` | Попыток логина на окно (по IP) |
 
 ### Оптимизации
 
@@ -362,8 +390,10 @@ Network: http://192.168.x.x:3000
 | `MEDIA_PAGE_SIZE` | `20` | Элементов на странице в основной галерее |
 | `ADMIN_PAGE_SIZE` | `50` | Элементов на странице в админ-сетке |
 | `USE_MEDIA_PROXY` | `true` | Если `true`, медиа отдаётся через `/media/:type/:id`; поставьте `false` для прямых presigned S3 URL |
+| `SHUTDOWN_TIMEOUT_MS` | `15000` | Тайм-аут graceful shutdown до force-exit (мс) |
+| `LOG_LEVEL` | `info` (prod) / `debug` (dev) | Уровень логирования pino (`trace`\|`debug`\|`info`\|`warn`\|`error`\|`fatal`) |
 
-Приложение **падает сразу при старте**, если `JWT_SECRET` или `COOKIE_SECRET` короче 32 символов.
+Приложение **падает сразу при старте**, если `JWT_SECRET` / `COOKIE_SECRET` короче 32 символов или если отсутствует любая из `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`. Валидация выполняется в `config/env.js` при загрузке модуля — до старта HTTP-сервера.
 
 ---
 
@@ -409,6 +439,7 @@ Network: http://192.168.x.x:3000
 | `s3_key` | `VARCHAR(500) NOT NULL` | Оригинальный файл |
 | `thumbnail_s3_key` | `VARCHAR(500) NOT NULL` | Миниатюра 400 px |
 | `display_s3_key` | `VARCHAR(500)` | Display-вариант 1920 px (nullable) |
+| `preview_s3_key` | `VARCHAR(500)` | Анимированный 5-секундный WebP для hover-preview на видео (nullable) |
 | `file_size` | `BIGINT` | Размер оригинального файла в байтах (из S3) |
 | `category_id` | `INTEGER` | `FK categories(id) ON DELETE SET NULL` |
 | `subcategory_id` | `INTEGER` | `FK subcategories(id) ON DELETE SET NULL` |
@@ -485,6 +516,7 @@ Network: http://192.168.x.x:3000
 | `DELETE` | `/:media_id` | client+ | Удалить из избранного |
 | `GET` | `/check/:media_id` | client+ | `{ favorited: boolean }` |
 | `POST` | `/batch-check` | client+ | `{ ids: number[] }` → `{ "1": true, "2": false, ... }` |
+| `GET` | `/export` | client+ | Потоковый ZIP-архив (store, без re-compress) с оригиналами всех избранных |
 
 ### Admin — `/api/admin`
 
@@ -499,12 +531,25 @@ Network: http://192.168.x.x:3000
 | `GET` | `/backup` | admin | JSON-стрим всех пяти таблиц (токены без `jwt_hash`) |
 | `POST` | `/restore` | admin | `multipart/form-data` с полем `file` — валидирует структуру, типы, затем `TRUNCATE CASCADE` + re-insert + сброс sequences |
 | `POST` | `/find-duplicates` | admin | Считает dHash для всех медиа, возвращает группы с расстоянием Хэмминга ≤ 10 |
+| `POST` | `/upload-zip` | admin | `multipart/form-data` с полем `archive` (`.zip`). Распаковывает и пропускает каждый файл через тот же pipeline что и обычная загрузка. Прогресс через SSE `zip.progress` |
+
+### Realtime — `/api/events`
+
+| Метод | Путь | Назначение |
+|-------|------|------------|
+| `GET` | `/api/events` | SSE-стрим. События: `auth.revoked`, `media.created`, `media.updated`, `media.deleted`, `zip.progress` |
+
+### Health — `/health`
+
+| Метод | Путь | Назначение |
+|-------|------|------------|
+| `GET` | `/health` | `SELECT 1` + `HEAD` S3-бакета. Без авторизации. Отдаёт 200 или 503 с диагностикой `{ status, checks: { db, s3 }, elapsedMs }` |
 
 ### Медиа-прокси — `/media/:type/:id`
 
 | Метод | Путь | Назначение |
 |-------|------|------------|
-| `GET` | `/media/:type/:id` | Стрим медиа из S3. `type` — `thumb`, `display` или `original`. Поддерживает `Range`. |
+| `GET` | `/media/:type/:id` | Стрим медиа из S3. `type` — `thumb`, `display`, `original` или `preview` (анимированный webp для видео). Поддерживает `Range`. |
 | `HEAD` | `/media/:type/:id` | Только заголовки |
 
 ---

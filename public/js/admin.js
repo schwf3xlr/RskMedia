@@ -1,4 +1,4 @@
-import { auth, api, toast, categories } from './main.js';
+import { auth, api, toast, categories, events } from './main.js';
 import { AGE_RATINGS } from './constants.js';
 
 // Server-side middleware already ensures admin access for /admin route.
@@ -170,6 +170,7 @@ function setupDropZone(dropZoneId, fileInputId) {
 
 setupDropZone('singleDropZone', 'singleFile');
 setupDropZone('batchDropZone', 'batchFiles');
+setupDropZone('zipDropZone', 'zipFile');
 
 // Single upload
 document.getElementById('singleUploadForm')?.addEventListener('submit', async (e) => {
@@ -441,6 +442,47 @@ function resetBatchDropZone() {
   const fileInput = document.getElementById('batchFiles');
   if (fileInput) fileInput.value = '';
 }
+
+// ZIP upload — one XHR (multipart), server unpacks and processes serially.
+// Progress fans out via SSE `zip.progress` because the browser's own
+// upload-progress event only tracks the multipart transfer, not the
+// server-side unpack + N sequential processFile calls.
+document.getElementById('zipUploadForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const file = document.getElementById('zipFile').files[0];
+  if (!file) return;
+
+  const summary = document.getElementById('zipProgressSummary');
+  const count = document.getElementById('zipProgressCount');
+  const fill = document.getElementById('zipProgressFill');
+  summary?.classList.remove('hidden');
+  if (count) count.textContent = 'Загрузка архива…';
+  if (fill) fill.style.width = '0%';
+
+  const unsubscribe = events.on('zip.progress', (data) => {
+    if (!data || typeof data.total !== 'number') return;
+    if (count) count.textContent = `${data.done ?? 0} / ${data.total}`;
+    if (fill && data.total > 0) fill.style.width = `${((data.done ?? 0) / data.total) * 100}%`;
+  });
+
+  const formData = new FormData();
+  formData.append('archive', file);
+  formData.append('category_id', document.getElementById('zipCategory').value);
+  formData.append('subcategory_id', document.getElementById('zipSubcategory').value);
+  formData.append('age_rating', document.getElementById('zipAge').value);
+
+  try {
+    const result = await api.upload('/api/admin/upload-zip', formData, {});
+    toast.show(`Загружено ${result.uploaded} из архива (${result.errors} ошибок)`,
+      result.errors > 0 ? 'warning' : 'success');
+    e.target.reset();
+  } catch (err) {
+    toast.show(err.message, 'error');
+  } finally {
+    unsubscribe();
+    setTimeout(() => summary?.classList.add('hidden'), 5000);
+  }
+});
 
 async function loadMediaCards(page = 1, append = false) {
   if (state.adminLoading || !state.adminHasMore) return;

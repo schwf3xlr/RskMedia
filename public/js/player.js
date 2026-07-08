@@ -1,4 +1,4 @@
-import { auth, api, toast, categories, favorites } from './main.js';
+import { auth, api, toast, categories, favorites, events } from './main.js';
 
 function showConfirm(message, options = {}) {
   return new Promise(resolve => {
@@ -487,6 +487,41 @@ const gallery = {
         </svg>
       `;
       card.appendChild(playBtn);
+
+      // Animated preview on hover. Only wire it up if the server actually
+      // produced one (older uploads and codec-incompatible clips have no
+      // preview_url — they stay on the static thumbnail without penalty).
+      // Debounce with a small delay so a mouse crossing the grid doesn't
+      // trigger dozens of network requests.
+      if (item.preview_url && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        let previewImg = null;
+        let hoverTimer = null;
+        const enter = () => {
+          hoverTimer = setTimeout(() => {
+            if (previewImg) return;
+            previewImg = document.createElement('img');
+            previewImg.src = item.preview_url;
+            previewImg.className = 'card-preview';
+            previewImg.alt = '';
+            previewImg.decoding = 'async';
+            previewImg.style.opacity = '0';
+            previewImg.addEventListener('load', () => {
+              // Only fade in if we're still hovered (cheap check via parent)
+              if (previewImg && previewImg.parentNode === card) previewImg.style.opacity = '1';
+            }, { once: true });
+            card.appendChild(previewImg);
+          }, 200);
+        };
+        const leave = () => {
+          clearTimeout(hoverTimer);
+          if (previewImg) {
+            previewImg.remove();
+            previewImg = null;
+          }
+        };
+        card.addEventListener('pointerenter', enter);
+        card.addEventListener('pointerleave', leave);
+      }
     }
 
     card.addEventListener('click', () => this.openModal(item.id));
@@ -1535,3 +1570,28 @@ const gallery = {
 };
 
 gallery.init();
+
+// Realtime gallery refresh via SSE. When an admin uploads/deletes elsewhere,
+// this quietly refreshes the current view instead of asking the user to
+// F5. Debounced with a small window so a batch upload of 100 files doesn't
+// trigger 100 refetches.
+{
+  let refreshTimer = null;
+  const schedule = () => {
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => {
+      // Reset to page 1 and re-fetch. Only when the gallery is idle to
+      // avoid trampling an in-flight infinite-scroll load.
+      if (gallery.loading) { schedule(); return; }
+      gallery.media = [];
+      gallery.page = 1;
+      gallery.hasMore = true;
+      const grid = document.getElementById('mediaGrid');
+      if (grid) grid.innerHTML = '';
+      gallery.loadMore();
+    }, 800);
+  };
+  events.on('media.created', schedule);
+  events.on('media.deleted', schedule);
+  events.on('media.updated', schedule);
+}

@@ -5,14 +5,9 @@ const UserModel = require('../models/user');
 const MediaModel = require('../models/media');
 const { getSignedUrlForKey, getObjectBuffer } = require('../config/s3');
 const { SIGN_URL_EXPIRES } = require('../config/constants');
+const { enrichMany } = require('../helpers/enrichUrls');
 const { invalidateAuthCache } = require('../middleware/auth');
 const db = require('../config/database');
-
-const USE_PROXY = process.env.USE_MEDIA_PROXY !== 'false';
-
-function proxyUrl(req, type, id) {
-  return `${req.protocol}://${req.get('host')}/media/${type}/${id}`;
-}
 
 const BACKUP_TABLES = ['categories', 'subcategories', 'tokens', 'media', 'favorites'];
 const BACKUP_SENSITIVE_COLUMNS = {
@@ -82,28 +77,7 @@ const AdminController = {
     });
 
     const total = media.length > 0 ? parseInt(media[0].total_count, 10) : 0;
-
-    const mediaWithUrls = await Promise.all(
-      media.map(async (m) => {
-        if (USE_PROXY) {
-          const result = {
-            ...m,
-            url: proxyUrl(req, 'original', m.id),
-            thumbnail_url: proxyUrl(req, 'thumb', m.id),
-          };
-          if (m.display_s3_key) {
-            result.display_url = proxyUrl(req, 'display', m.id);
-          }
-          return result;
-        }
-        const [url, thumbnail_url, display_url] = await Promise.all([
-          getSignedUrlForKey(m.s3_key, SIGN_URL_EXPIRES),
-          getSignedUrlForKey(m.thumbnail_s3_key, SIGN_URL_EXPIRES),
-          m.display_s3_key ? getSignedUrlForKey(m.display_s3_key, SIGN_URL_EXPIRES) : null,
-        ]);
-        return { ...m, url, thumbnail_url, display_url };
-      })
-    );
+    const mediaWithUrls = await enrichMany(media, req);
 
     res.json({ media: mediaWithUrls, total, page: parseInt(page), totalPages: Math.ceil(total / limit) });
   },

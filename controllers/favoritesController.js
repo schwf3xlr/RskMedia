@@ -1,12 +1,11 @@
+const path = require('path');
+const archiver = require('archiver');
 const FavoritesModel = require('../models/favorites');
-const { getSignedUrlForKey } = require('../config/s3');
-const { SIGN_URL_EXPIRES, TYPE_SORT_MAP } = require('../config/constants');
-
-const USE_PROXY = process.env.USE_MEDIA_PROXY !== 'false';
-
-function proxyUrl(req, type, id) {
-  return `${req.protocol}://${req.get('host')}/media/${type}/${id}`;
-}
+const { TYPE_SORT_MAP } = require('../config/constants');
+const { enrichMany } = require('../helpers/enrichUrls');
+const { getObjectStream } = require('../config/s3');
+const logger = require('../helpers/logger');
+const db = require('../config/database');
 
 // "Фото" / "Видео" sort options are type filters - translate to `type`
 // param + default sort (newest) for the filtered slice.
@@ -15,33 +14,6 @@ function resolveSortAndType(sort) {
     return { type: TYPE_SORT_MAP[sort], sort: 'newest' };
   }
   return { type: undefined, sort };
-}
-
-async function enrichFavorites(favorites, req) {
-  return Promise.all(
-    favorites.map(async (f) => {
-      if (USE_PROXY) {
-        const result = {
-          ...f,
-          url: proxyUrl(req, 'original', f.id),
-          thumbnail_url: proxyUrl(req, 'thumb', f.id),
-        };
-        if (f.display_s3_key) {
-          result.display_url = proxyUrl(req, 'display', f.id);
-        }
-        return result;
-      }
-      const result = {
-        ...f,
-        url: await getSignedUrlForKey(f.s3_key, SIGN_URL_EXPIRES),
-        thumbnail_url: await getSignedUrlForKey(f.thumbnail_s3_key, SIGN_URL_EXPIRES),
-      };
-      if (f.display_s3_key) {
-        result.display_url = await getSignedUrlForKey(f.display_s3_key, SIGN_URL_EXPIRES);
-      }
-      return result;
-    })
-  );
 }
 
 const FavoritesController = {
@@ -61,7 +33,7 @@ const FavoritesController = {
     });
 
     const total = favorites.length > 0 ? parseInt(favorites[0].total_count, 10) : 0;
-    const favoritesWithUrls = await enrichFavorites(favorites, req);
+    const favoritesWithUrls = await enrichMany(favorites, req);
 
     res.json({
       media: favoritesWithUrls,
@@ -104,6 +76,52 @@ const FavoritesController = {
     const { ids } = req.body;
     const result = await FavoritesModel.batchCheck(req.user.token_id, ids);
     res.json(result);
+  },
+
+  async exportZip(req, res) {
+    // Stream a zip built on-the-fly. archiver pipes to res so we never buffer
+    // the whole archive in memory — 500 favorites at ~3 MB each = 1.5 GB
+    // that we're not holding. Compression level 0 (store) because the files
+    // are already compressed formats (JPEG/PNG/WebP/MP4) — deflate on them
+    // wastes CPU for near-zero size reduction.
+    const result = await db.query(
+      `SELECT m.id, m.type, m.s3_key
+       FROM favorites f
+       JOIN media m ON f.media_id = m.id
+       WHERE f.token_id = $1
+       ORDER BY f.added_at DESC`,
+      [req.user.token_id]
+    );
+
+    const filename = `rskmedia_favorites_${Date.now()}.zip`;
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    const archive = archiver('zip', { zlib: { level: 0 }, store: true });
+    archive.on('error', (err) => {
+      logger.error({ err }, 'favorites export archive error');
+      if (!res.headersSent) res.status(500).end();
+      else res.destroy(err);
+    });
+    // If the client bails mid-download, kill the archive stream to release
+    // its file handles/S3 streams promptly.
+    res.on('close', () => archive.destroy());
+
+    archive.pipe(res);
+
+    for (const row of result.rows) {
+      try {
+        const { body, contentType } = await getObjectStream(row.s3_key);
+        const ext = path.extname(row.s3_key) || '';
+        // Prefix with id to guarantee uniqueness even when two favorites
+        // share a filename (uuids are the s3 key already).
+        const name = `${row.id}_${path.basename(row.s3_key) || `media${ext}`}`;
+        archive.append(body, { name });
+      } catch (err) {
+        logger.warn({ err, id: row.id }, 'favorites export skipped item');
+      }
+    }
+    await archive.finalize();
   },
 };
 

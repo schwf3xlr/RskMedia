@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS media (
     s3_key VARCHAR(500) NOT NULL,
     thumbnail_s3_key VARCHAR(500) NOT NULL,
     display_s3_key VARCHAR(500),
+    preview_s3_key VARCHAR(500),
     file_size BIGINT,
     category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
     subcategory_id INTEGER REFERENCES subcategories(id) ON DELETE SET NULL,
@@ -120,6 +121,11 @@ async function migrate() {
   await db.query(
     `CREATE INDEX IF NOT EXISTS idx_tokens_token_lookup ON tokens(token_lookup) WHERE token_lookup IS NOT NULL`
   );
+
+  // Animated preview WebP for video hover on card. Nullable — legacy rows and
+  // photos never have one, and generation can fail (bad codec, corrupt input)
+  // in which case we fall back to the static thumbnail on the client.
+  await db.query('ALTER TABLE media ADD COLUMN IF NOT EXISTS preview_s3_key VARCHAR(500)');
 }
 
 async function initDatabase() {

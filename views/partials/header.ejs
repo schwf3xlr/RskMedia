@@ -44,5 +44,9 @@
   </script>
   <meta name="csrf-token" content="<%= csrfToken %>">
   <meta name="user-type" content="<%= user ? user.type : 'client' %>">
+  <!-- Server-authoritative constants for the frontend. Kept in one place
+       to prevent the AGE_RATINGS array from drifting between backend and
+       client (which used to require editing two files). -->
+  <meta name="app-config" content='<%= JSON.stringify(CLIENT_CONFIG) %>'>
 </head>
 <body>

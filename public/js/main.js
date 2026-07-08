@@ -266,6 +266,70 @@ const toast = {
   },
 };
 
+// Realtime events over SSE. Server publishes:
+//   auth.revoked       — this token was replaced by a login elsewhere
+//   media.created      — new media landed (payload: { id } or { ids: [] })
+//   media.updated      — metadata changed
+//   media.deleted      — payload: { ids: [] }
+//   zip.progress       — { phase, total, done }
+// Handlers register via events.on(name, fn). auth.revoked has a built-in
+// handler that toasts and redirects to /login after a short delay.
+const events = {
+  _es: null,
+  _handlers: new Map(),
+
+  on(name, fn) {
+    if (!this._handlers.has(name)) this._handlers.set(name, new Set());
+    this._handlers.get(name).add(fn);
+    return () => this._handlers.get(name)?.delete(fn);
+  },
+
+  _emit(name, data) {
+    const set = this._handlers.get(name);
+    if (!set) return;
+    for (const fn of set) {
+      try { fn(data); } catch (e) { console.error('SSE handler error', e); }
+    }
+  },
+
+  connect() {
+    if (this._es) return;
+    // EventSource sends the auth cookie automatically because the endpoint
+    // is same-origin. Reconnect is built-in with the `retry:` we sent from
+    // the server, so no manual backoff loop is needed here.
+    try {
+      this._es = new EventSource('/api/events');
+    } catch { return; }
+
+    const names = ['auth.revoked', 'media.created', 'media.updated', 'media.deleted', 'zip.progress'];
+    for (const name of names) {
+      this._es.addEventListener(name, (e) => {
+        let data = {};
+        try { data = JSON.parse(e.data); } catch {}
+        this._emit(name, data);
+      });
+    }
+    this._es.onerror = () => { /* browser auto-reconnects using retry: */ };
+  },
+};
+
+// Concurrent-login handler — toast + hard redirect. Registered here so
+// every page (main, favorites, admin) picks it up regardless of which
+// script initialises last.
+events.on('auth.revoked', (data) => {
+  toast.show(data?.message || 'Выполнен вход с другого устройства', 'warning');
+  setTimeout(() => { window.location.href = '/login'; }, 2500);
+});
+
+// Connect once DOM is ready — but only for pages where a user is logged in.
+if (document.querySelector('meta[name="user-type"]')) {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => events.connect(), { once: true });
+  } else {
+    events.connect();
+  }
+}
+
 const categories = {
   _subcategoriesCache: new Map(),
   _listCache: null,
@@ -356,7 +420,7 @@ const favorites = {
   },
 };
 
-export { auth, api, toast, categories, favorites };
+export { auth, api, toast, categories, favorites, events };
 
 const logoutBtn = document.getElementById('logoutBtn');
 if (logoutBtn) {

@@ -241,6 +241,20 @@
   color: white;
 }
 
+/* Animated WebP preview shown on hover over video cards. Absolute-position
+   over the static thumbnail; fade in via opacity to avoid a jarring
+   pop-in when the preview finishes loading. */
+.card-preview {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 1;
+  pointer-events: none;
+  transition: opacity 150ms ease-out;
+}
+
 /* === LOADING === */
 .loading-spinner {
   display: flex;

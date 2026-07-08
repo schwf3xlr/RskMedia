@@ -11,6 +11,7 @@ const TYPE_TO_FIELD = {
   thumb: 'thumbnail_s3_key',
   display: 'display_s3_key',
   original: 's3_key',
+  preview: 'preview_s3_key',
 };
 
 const MAX_CACHE_SIZE = 5 * 1024 * 1024;
@@ -366,7 +367,7 @@ function makeRoute(isHead) {
 
       await handle(req, res, s3Key, isHead);
     } catch (err) {
-      console.error('Media proxy error:', err);
+      require('../helpers/logger').error({ err, type, id }, 'Media proxy error');
       if (!res.headersSent) res.status(500).end();
     }
   };
