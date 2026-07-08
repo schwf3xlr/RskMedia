@@ -341,7 +341,14 @@ function registerGracefulShutdown(server) {
   // silently. Log + continue for now (the supervisor will restart on real
   // crashes via process.exit in uncaughtException below).
   process.on('unhandledRejection', (reason) => {
-    logger.error({ reason }, 'Unhandled promise rejection');
+    // Some rejection values (torn streams, aborted requests) are Error
+    // instances whose message/stack are non-enumerable, which makes pino
+    // log them as `{}`. Extract stack + own-property names so we see
+    // *something* useful instead of an empty object.
+    const detail = reason instanceof Error
+      ? { name: reason.name, message: reason.message, code: reason.code, stack: reason.stack }
+      : reason;
+    logger.error({ reason: detail }, 'Unhandled promise rejection');
   });
   process.on('uncaughtException', (err) => {
     logger.fatal({ err }, 'Uncaught exception');

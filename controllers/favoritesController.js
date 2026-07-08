@@ -98,30 +98,69 @@ const FavoritesController = {
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
 
     const archive = archiver('zip', { zlib: { level: 0 }, store: true });
+
+    // Client-cancel: don't wait for archive.destroy() to bubble errors —
+    // set a flag we can short-circuit the append loop against so we stop
+    // asking S3 for more streams once the download is gone.
+    let clientGone = false;
+    res.on('close', () => {
+      clientGone = true;
+      try { archive.destroy(); } catch {}
+    });
+
+    // Archive-level warnings (missing files, etc.) shouldn't kill the
+    // stream; real errors from archiver DO — but we handle them by
+    // logging and letting the pipeline unwind, not by re-throwing.
+    archive.on('warning', (err) => {
+      if (err.code !== 'ENOENT') logger.warn({ err }, 'favorites export archive warning');
+    });
     archive.on('error', (err) => {
       logger.error({ err }, 'favorites export archive error');
-      if (!res.headersSent) res.status(500).end();
-      else res.destroy(err);
+      if (!res.headersSent) { try { res.status(500).end(); } catch {} }
+      else { try { res.destroy(err); } catch {} }
     });
-    // If the client bails mid-download, kill the archive stream to release
-    // its file handles/S3 streams promptly.
-    res.on('close', () => archive.destroy());
 
     archive.pipe(res);
 
-    for (const row of result.rows) {
-      try {
-        const { body, contentType } = await getObjectStream(row.s3_key);
+    try {
+      for (const row of result.rows) {
+        if (clientGone) break;
+        let body;
+        try {
+          const streamRes = await getObjectStream(row.s3_key);
+          body = streamRes.body;
+        } catch (err) {
+          logger.warn({ err, id: row.id }, 'favorites export s3 stream failed');
+          continue;
+        }
+
+        // CRITICAL: attach an error handler to the S3 body stream BEFORE
+        // passing it to archiver. Without a listener, a mid-stream S3
+        // failure (dropped TCP, ECONNRESET, bucket-side 500) throws as
+        // an unhandled 'error' event on the stream — which Node ≥15
+        // promotes to unhandledRejection. Silently absorbing it here
+        // lets archiver treat that entry as truncated and move on.
+        body.on('error', (err) => {
+          logger.warn({ err, id: row.id }, 'favorites export item stream error');
+          // Detach so archiver doesn't try to consume more from it.
+          try { body.destroy(); } catch {}
+        });
+
         const ext = path.extname(row.s3_key) || '';
         // Prefix with id to guarantee uniqueness even when two favorites
         // share a filename (uuids are the s3 key already).
         const name = `${row.id}_${path.basename(row.s3_key) || `media${ext}`}`;
         archive.append(body, { name });
-      } catch (err) {
-        logger.warn({ err, id: row.id }, 'favorites export skipped item');
       }
+
+      if (!clientGone) await archive.finalize();
+    } catch (err) {
+      // Errors here are almost always "archive.finalize() rejected because
+      // downstream (res) is already closed". Log at debug — the client
+      // already got what they wanted.
+      logger.debug({ err }, 'favorites export finalize aborted');
+      try { archive.destroy(); } catch {}
     }
-    await archive.finalize();
   },
 };
 
