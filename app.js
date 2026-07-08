@@ -200,6 +200,11 @@ app.get('/api/csrf-token', csrfTokenEndpoint);
 // without polling). Auth-gated so a stranger on the LAN can't listen.
 const sseBroker = require('./helpers/sseBroker');
 app.get('/api/events', authenticateToken, (req, res) => {
+  // Node ≥18 sets server.requestTimeout to 5 min by default. SSE streams
+  // live longer than any request — disable timeouts on this specific
+  // socket so the connection isn't reset mid-stream.
+  req.setTimeout(0);
+  res.setTimeout(0);
   sseBroker.attach(res, req.user.token_id);
 });
 

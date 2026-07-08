@@ -311,7 +311,23 @@ const events = {
     }
     this._es.onerror = () => { /* browser auto-reconnects using retry: */ };
   },
+
+  disconnect() {
+    if (!this._es) return;
+    try { this._es.close(); } catch {}
+    this._es = null;
+  },
 };
+
+// Close the EventSource BEFORE navigating away. Chrome (and other browsers)
+// cap HTTP/1.1 connections per origin at 6 — every SSE stream takes one
+// slot. Without an explicit close on pagehide, quickly navigating home →
+// favorites → admin would leave a chain of half-dead sockets that the
+// server hasn't cleaned up yet, and the next page's requests (images,
+// /api/*) queue behind them until the browser closes them itself.
+// `pagehide` is used instead of `beforeunload` so bfcache and mobile
+// backgrounding also trigger it.
+window.addEventListener('pagehide', () => events.disconnect());
 
 // Concurrent-login handler — toast + hard redirect. Registered here so
 // every page (main, favorites, admin) picks it up regardless of which

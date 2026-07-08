@@ -14,7 +14,10 @@ const broadcast = new Set();
 // SSE requires periodic writes or the intermediate proxies (nginx, cloud LB)
 // will close the connection at their idle timeout. A comment line — the
 // smallest legal SSE payload — costs almost nothing and keeps NAT open.
-const KEEPALIVE_MS = 25000;
+// The keepalive also serves as a dead-socket probe: if the client's tab
+// closed but the OS hasn't told us via FIN yet, the next write throws and
+// cleanup() runs. 10s balances quick eviction against wasted bytes.
+const KEEPALIVE_MS = 10000;
 
 function attach(res, tokenId) {
   res.writeHead(200, {
@@ -31,12 +34,10 @@ function attach(res, tokenId) {
     byToken.get(tokenId).add(res);
   }
 
-  const keepalive = setInterval(() => {
-    try { res.write(': keepalive\n\n'); } catch { /* dead socket cleanup below */ }
-  }, KEEPALIVE_MS);
-  keepalive.unref();
-
+  let cleaned = false;
   const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
     clearInterval(keepalive);
     broadcast.delete(res);
     if (tokenId) {
@@ -46,9 +47,27 @@ function attach(res, tokenId) {
         if (set.size === 0) byToken.delete(tokenId);
       }
     }
+    // Force socket teardown in case Node didn't notice the peer FIN yet.
+    // Without this, a stale connection sits in broadcast (until GC) and
+    // counts against the browser's 6-per-origin HTTP/1.1 cap on the next
+    // page load, which manifests as "site hangs" while the browser waits
+    // for a connection slot.
+    try { res.end(); } catch {}
+    try { res.destroy(); } catch {}
+    logger.debug({ tokenId, clients: broadcast.size }, 'SSE client detached');
   };
+
+  const keepalive = setInterval(() => {
+    // A failed write means the socket is half-open; trigger cleanup
+    // immediately instead of waiting for another event loop turn.
+    try { res.write(': keepalive\n\n'); }
+    catch { cleanup(); }
+  }, KEEPALIVE_MS);
+  keepalive.unref();
+
   res.on('close', cleanup);
   res.on('error', cleanup);
+  res.req?.on('close', cleanup);
   logger.debug({ tokenId, clients: broadcast.size }, 'SSE client attached');
 }
 
