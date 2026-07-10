@@ -4,6 +4,13 @@
 // same row can appear on adjacent pages (visible duplicates in the gallery)
 // or get skipped entirely. `id DESC` is a fixed, unique column, so it gives
 // a deterministic order that never shifts between LIMIT/OFFSET queries.
+//
+// `random` is special-cased in the model — a raw `RANDOM()` re-shuffles on
+// every query, so LIMIT/OFFSET pagination overlaps between pages (item X
+// lands on page 1 in one shuffle and page 2 in the next → visible duplicates
+// in the gallery and looping in the modal). The model builds a seeded
+// deterministic random via `md5(id::text || seed)` when the caller passes
+// a `randomSeed`, so all pages of one "session" share one ordering.
 const SORT_MAP = {
   newest: 'm.uploaded_at DESC, m.id DESC',
   oldest: 'm.uploaded_at ASC, m.id ASC',

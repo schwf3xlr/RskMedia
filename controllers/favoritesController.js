@@ -18,9 +18,12 @@ function resolveSortAndType(sort) {
 
 const FavoritesController = {
   async getAll(req, res) {
-    const { category_id, subcategory_id, age, sort, page = 1, limit = 20 } = req.query;
+    const { category_id, subcategory_id, age, sort, random_seed, page = 1, limit = 20 } = req.query;
     const offset = (page - 1) * limit;
     const { type, sort: effectiveSort } = resolveSortAndType(sort);
+    // See mediaController.getAll for why the seed is clamped this way.
+    const seedNum = Number(random_seed);
+    const seed = Number.isFinite(seedNum) ? Math.abs(seedNum) & 0x7fffffff : undefined;
 
     const favorites = await FavoritesModel.getByTokenIdWithCount(req.user.token_id, {
       categoryId: category_id,
@@ -28,6 +31,7 @@ const FavoritesController = {
       age,
       type,
       sort: effectiveSort,
+      randomSeed: seed,
       limit: parseInt(limit),
       offset: parseInt(offset),
     });

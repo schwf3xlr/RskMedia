@@ -36,6 +36,13 @@ function showConfirm(message, options = {}) {
   });
 }
 
+// Positive 31-bit int seed for the deterministic random shuffle. Matches
+// the server-side cap (0x7fffffff) so we don't ship a value the backend
+// will silently truncate. Random.random() * 2^31 covers the whole range.
+function newRandomSeed() {
+  return Math.floor(Math.random() * 0x7fffffff) + 1;
+}
+
 const gallery = {
   media: [],
   page: 1,
@@ -143,11 +150,19 @@ const gallery = {
     }
 
     const apply = () => {
+      const nextSort = sortFilter?.value || 'newest';
       this.filters = {
         category_id: categoryFilter?.value || '',
         subcategory_id: subcategoryFilter?.value || '',
         age: ageFilter?.value || '',
-        sort: sortFilter?.value || 'newest',
+        sort: nextSort,
+        // Seeded random shuffle. Without a seed the server rerandomizes on
+        // every page fetch, so LIMIT/OFFSET pagination duplicates items
+        // across pages and the modal loops back after ~1-2 pages of
+        // swiping (visible especially on mobile where paging happens fast).
+        // A fresh seed on every apply/clear gives the user a new order;
+        // during pagination we keep the same seed so pages line up.
+        ...(nextSort === 'random' ? { random_seed: newRandomSeed() } : {}),
       };
       this.updateURL();
       this.resetGrid();
@@ -178,12 +193,22 @@ const gallery = {
 
   restoreFiltersFromURL() {
     const params = new URLSearchParams(window.location.search);
+    const sort = params.get('sort') || 'newest';
     this.filters = {
       category_id: params.get('category_id') || '',
       subcategory_id: params.get('subcategory_id') || '',
       age: params.get('age') || '',
-      sort: params.get('sort') || 'newest',
+      sort,
     };
+    if (sort === 'random') {
+      // Reuse the seed from the URL when present (sharing/reloading a link
+      // reproduces the same shuffle). Otherwise mint a fresh one so the
+      // very first page load isn't stuck on the raw non-seeded fallback.
+      const urlSeed = Number(params.get('random_seed'));
+      this.filters.random_seed = Number.isFinite(urlSeed) && urlSeed > 0
+        ? String(urlSeed)
+        : String(newRandomSeed());
+    }
   },
 
   updateURL() {
@@ -313,14 +338,21 @@ const gallery = {
           }
         }
       } else {
-        this.media.push(...items);
-        await this.fetchFavoriteStates(items);
+        // Defense-in-depth: filter out any ids we've already loaded before
+        // pushing. The seeded shuffle on the server should prevent this,
+        // but a race between a batch upload and pagination could still
+        // shift item positions; without dedupe those items would appear
+        // twice in the grid and trap the modal's index calculations.
+        const seen = new Set(this.media.map(m => m.id));
+        const fresh = items.filter(m => !seen.has(m.id));
+        this.media.push(...fresh);
+        await this.fetchFavoriteStates(fresh);
         // Hint the browser to start fetching the first few images in parallel
         // with layout work, before the <img> elements are even appended.
         // Without this, loading="lazy" defers fetches until the cards hit
         // the viewport, costing ~100-300ms on the first paint of the feed.
-        if (this.page === 1) this.preloadAboveFoldImages(items);
-        this.renderItems(items);
+        if (this.page === 1) this.preloadAboveFoldImages(fresh);
+        this.renderItems(fresh);
         this.page++;
       }
     } catch (err) {

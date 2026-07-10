@@ -34,15 +34,22 @@ sharp.cache({ memory: 100, items: 200, files: 0 });
 
 const MediaController = {
   async getAll(req, res) {
-    const { category_id, subcategory_id, age, sort, page = 1, limit = 20 } = req.query;
+    const { category_id, subcategory_id, age, sort, random_seed, page = 1, limit = 20 } = req.query;
     const offset = (page - 1) * limit;
     const { type, sort: effectiveSort } = resolveSortAndType(sort);
+    // random_seed lets the client pin a single deterministic shuffle across
+    // paginated requests. Cap at 32 bits so a hostile client can't try to
+    // exhaust the md5 hash cache; anything falsy silently falls back to the
+    // legacy RANDOM() path.
+    const seedNum = Number(random_seed);
+    const seed = Number.isFinite(seedNum) ? Math.abs(seedNum) & 0x7fffffff : undefined;
     const media = await MediaModel.getAllWithCount({
       categoryId: category_id,
       subcategoryId: subcategory_id,
       age,
       type,
       sort: effectiveSort,
+      randomSeed: seed,
       limit: parseInt(limit),
       offset: parseInt(offset),
     });

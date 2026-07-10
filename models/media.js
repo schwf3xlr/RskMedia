@@ -3,6 +3,19 @@ const { SORT_MAP } = require('../config/constants');
 
 const ALLOWED_FIELDS = ['category_id', 'subcategory_id', 'age_rating'];
 
+// Build the ORDER BY clause. When sort=random AND a numeric seed is provided,
+// use md5(id::text || seed) so the shuffle is deterministic for the whole
+// pagination session — the same seed yields the same ordering for page 1..N.
+// tiebreaker m.id catches md5 collisions (astronomically unlikely, still cheap).
+// Falls back to plain RANDOM() only when caller didn't send a seed.
+function buildOrderBy(sort, randomSeed, params) {
+  if (sort === 'random' && Number.isFinite(randomSeed)) {
+    params.push(String(randomSeed));
+    return { order: `md5(m.id::text || $${params.length}), m.id`, idxOffset: 1 };
+  }
+  return { order: SORT_MAP[sort] || 'm.uploaded_at DESC', idxOffset: 0 };
+}
+
 function buildWhere({ categoryId, subcategoryId, age, type, missingFields, query, params, idx = 1 }) {
   let queryStr = ' WHERE 1=1';
 
@@ -42,18 +55,19 @@ function buildWhere({ categoryId, subcategoryId, age, type, missingFields, query
 }
 
 const MediaModel = {
-  async getAll({ categoryId, subcategoryId, age, type, missingFields, sort, limit = 20, offset = 0 }) {
-    return this.getAllWithCount({ categoryId, subcategoryId, age, type, missingFields, sort, limit, offset });
+  async getAll({ categoryId, subcategoryId, age, type, missingFields, sort, randomSeed, limit = 20, offset = 0 }) {
+    return this.getAllWithCount({ categoryId, subcategoryId, age, type, missingFields, sort, randomSeed, limit, offset });
   },
 
   // Single-query variant: returns rows with `total_count` from window function (no separate COUNT query)
-  async getAllWithCount({ categoryId, subcategoryId, age, type, missingFields, sort, limit = 20, offset = 0 }) {
+  async getAllWithCount({ categoryId, subcategoryId, age, type, missingFields, sort, randomSeed, limit = 20, offset = 0 }) {
     const params = [];
     const where = buildWhere({ categoryId, subcategoryId, age, type, missingFields, params });
     const queryStr = where.queryStr;
     let idx = where.idx;
 
-    const order = SORT_MAP[sort] || 'm.uploaded_at DESC';
+    const { order, idxOffset } = buildOrderBy(sort, randomSeed, params);
+    idx += idxOffset;
     const query = `
       SELECT m.*, c.name as category_name, s.name as subcategory_name,
              COUNT(*) OVER() AS total_count
@@ -69,17 +83,18 @@ const MediaModel = {
     return result.rows;
   },
 
-  async search({ query, categoryId, subcategoryId, age, type, sort, limit = 20, offset = 0 }) {
-    return this.searchWithCount({ query, categoryId, subcategoryId, age, type, sort, limit, offset });
+  async search({ query, categoryId, subcategoryId, age, type, sort, randomSeed, limit = 20, offset = 0 }) {
+    return this.searchWithCount({ query, categoryId, subcategoryId, age, type, sort, randomSeed, limit, offset });
   },
 
-  async searchWithCount({ query, categoryId, subcategoryId, age, type, sort, limit = 20, offset = 0 }) {
+  async searchWithCount({ query, categoryId, subcategoryId, age, type, sort, randomSeed, limit = 20, offset = 0 }) {
     const params = [];
     const where = buildWhere({ categoryId, subcategoryId, age, type, params, query });
     const queryStr = where.queryStr;
     let idx = where.idx;
 
-    const order = SORT_MAP[sort] || 'm.uploaded_at DESC';
+    const { order, idxOffset } = buildOrderBy(sort, randomSeed, params);
+    idx += idxOffset;
     const sql = `
       SELECT m.*, c.name as category_name, s.name as subcategory_name,
              COUNT(*) OVER() AS total_count

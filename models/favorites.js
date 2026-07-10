@@ -1,6 +1,17 @@
 const db = require('../config/database');
 const { SORT_MAP } = require('../config/constants');
 
+// Same seeded-random trick as models/media.js. Without it, ORDER BY RANDOM()
+// re-shuffles per LIMIT/OFFSET page, and the same favorite lands on multiple
+// pages, so listing/modal loops back after a few swipes.
+function buildOrderBy(sort, randomSeed, params, fallback) {
+  if (sort === 'random' && Number.isFinite(randomSeed)) {
+    params.push(String(randomSeed));
+    return { order: `md5(m.id::text || $${params.length}), m.id`, idxOffset: 1 };
+  }
+  return { order: SORT_MAP[sort] || fallback, idxOffset: 0 };
+}
+
 function buildWhere({ categoryId, subcategoryId, age, type, params, idx = 2 }) {
   let query = '';
   if (categoryId) {
@@ -26,11 +37,11 @@ function buildWhere({ categoryId, subcategoryId, age, type, params, idx = 2 }) {
 }
 
 const FavoritesModel = {
-  async getByTokenId(tokenId, { categoryId, subcategoryId, age, type, sort, limit = 20, offset = 0 }) {
-    return this.getByTokenIdWithCount(tokenId, { categoryId, subcategoryId, age, type, sort, limit, offset });
+  async getByTokenId(tokenId, { categoryId, subcategoryId, age, type, sort, randomSeed, limit = 20, offset = 0 }) {
+    return this.getByTokenIdWithCount(tokenId, { categoryId, subcategoryId, age, type, sort, randomSeed, limit, offset });
   },
 
-  async getByTokenIdWithCount(tokenId, { categoryId, subcategoryId, age, type, sort, limit = 20, offset = 0 }) {
+  async getByTokenIdWithCount(tokenId, { categoryId, subcategoryId, age, type, sort, randomSeed, limit = 20, offset = 0 }) {
     const params = [tokenId];
     const where = buildWhere({ categoryId, subcategoryId, age, type, params });
     const whereClause = where.query;
@@ -40,7 +51,8 @@ const FavoritesModel = {
     // favorites share the same `added_at` (e.g. user adds several in quick
     // succession), we need a deterministic tiebreaker or pagination can
     // duplicate/skip rows between pages.
-    const order = SORT_MAP[sort] || 'f.added_at DESC, m.id DESC';
+    const { order, idxOffset } = buildOrderBy(sort, randomSeed, params, 'f.added_at DESC, m.id DESC');
+    idx += idxOffset;
     const query = `
       SELECT m.*, c.name as category_name, s.name as subcategory_name,
              COUNT(*) OVER() AS total_count
