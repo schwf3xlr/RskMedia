@@ -307,10 +307,24 @@
    Кастомный dropdown с чекбоксами для мульти-фильтров (категории /
    подкатегории / возраст). Стили калькированы под .filter-select чтобы
    не выделяться в filters-row. */
+
+/* .filters должен перебивать stacking context карточек ниже. .media-card
+   использует transform (анимация cardIn + hover), из-за чего каждая
+   карточка создаёт собственный stacking context, и попап-панель без
+   явного z-index на .filters уходит под сетку. */
+.filters {
+  position: relative;
+  z-index: 10;
+}
 .multi-select {
   position: relative;
   min-width: 180px;
   height: var(--control-height);
+}
+/* Открытый multi-select поднимаем над братьями-фильтрами, чтобы его
+   панель гарантированно закрывала соседние тогглеры. */
+.multi-select.open {
+  z-index: 11;
 }
 .multi-select-toggle {
   width: 100%;
@@ -346,6 +360,11 @@
   color: var(--text-secondary);
 }
 .multi-select-panel {
+  /* Скрыто по умолчанию. HTML-атрибут `hidden` не работает, потому что
+     ниже стоит display: flex — у класса выше специфичность, чем у
+     UA-правила [hidden] { display: none }. Открытие/закрытие делаем
+     через .multi-select.open в JS. */
+  display: none;
   position: absolute;
   top: calc(100% + 6px);
   left: 0;
@@ -359,9 +378,11 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
-  display: flex;
   flex-direction: column;
   gap: 2px;
+}
+.multi-select.open .multi-select-panel {
+  display: flex;
 }
 .multi-select-option {
   display: flex;

@@ -96,7 +96,9 @@ class MultiSelect {
     this.panel.className = 'multi-select-panel';
     this.panel.setAttribute('role', 'listbox');
     this.panel.setAttribute('aria-multiselectable', 'true');
-    this.panel.hidden = true;
+    // Видимость управляется через класс .open на контейнере (см. CSS) —
+    // атрибут hidden здесь не работал, потому что базовое правило панели
+    // с более высокой специфичностью выставляло display: flex.
     this.container.appendChild(this.panel);
     this._updateLabel();
   }
@@ -169,14 +171,12 @@ class MultiSelect {
       MultiSelect._openInstance.close();
     }
     this.container.classList.add('open');
-    this.panel.hidden = false;
     this.toggle.setAttribute('aria-expanded', 'true');
     MultiSelect._openInstance = this;
   }
 
   close() {
     this.container.classList.remove('open');
-    this.panel.hidden = true;
     this.toggle.setAttribute('aria-expanded', 'false');
     if (MultiSelect._openInstance === this) MultiSelect._openInstance = null;
   }
