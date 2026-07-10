@@ -7,18 +7,9 @@
   </div>
   <div class="filters">
     <div class="filters-row">
-      <select class="filter-select" id="categoryFilter">
-        <option value="">Все категории</option>
-      </select>
-      <select class="filter-select" id="subcategoryFilter">
-        <option value="">Все подкатегории</option>
-      </select>
-      <select class="filter-select" id="ageFilter">
-        <option value="">Все возраста</option>
-        <% for(let i of AGE_RATINGS) { %>
-        <option value="<%= i %>"><%= i >= 19 ? i + '+' : i %></option>
-        <% } %>
-      </select>
+      <div class="multi-select" id="categoryFilter" data-empty="Все категории" data-label="категории"></div>
+      <div class="multi-select" id="subcategoryFilter" data-empty="Все подкатегории" data-label="подкатегории"></div>
+      <div class="multi-select" id="ageFilter" data-empty="Все возраста" data-label="возраста"></div>
       <select class="filter-select" id="sortFilter">
         <option value="newest">Новые</option>
         <option value="oldest">Старые</option>

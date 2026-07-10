@@ -43,6 +43,145 @@ function newRandomSeed() {
   return Math.floor(Math.random() * 0x7fffffff) + 1;
 }
 
+// Custom multi-select dropdown backed by a checkbox list. Used instead of
+// <select multiple> because the native control on mobile is awkward (opens a
+// system-level picker that hides half the filter row) and doesn't compose
+// well with our existing filter styling.
+//
+// Contract: attach to a <div class="multi-select" id="..." data-empty="…"
+// data-label="…"></div>. Container becomes fully controlled by this class —
+// contents get replaced. Use setOptions([{ id, name }]), setValue([ids]),
+// getValue() → array of string ids. Only one panel opens at a time.
+class MultiSelect {
+  static _openInstance = null;
+  static _globalListenerAttached = false;
+  static _attachGlobalListener() {
+    if (MultiSelect._globalListenerAttached) return;
+    MultiSelect._globalListenerAttached = true;
+    document.addEventListener('click', (e) => {
+      const open = MultiSelect._openInstance;
+      if (open && !open.container.contains(e.target)) open.close();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && MultiSelect._openInstance) {
+        MultiSelect._openInstance.close();
+      }
+    });
+  }
+
+  constructor(container) {
+    this.container = container;
+    this.emptyLabel = container.dataset.empty || 'Все';
+    this.groupLabel = container.dataset.label || 'элементы';
+    this.options = [];
+    this.selected = new Set();
+    this._build();
+    MultiSelect._attachGlobalListener();
+  }
+
+  _build() {
+    this.container.innerHTML = '';
+    this.toggle = document.createElement('button');
+    this.toggle.type = 'button';
+    this.toggle.className = 'multi-select-toggle';
+    this.toggle.setAttribute('aria-haspopup', 'listbox');
+    this.toggle.setAttribute('aria-expanded', 'false');
+    this.toggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.container.classList.contains('open') ? this.close() : this.open();
+    });
+    this.container.appendChild(this.toggle);
+
+    this.panel = document.createElement('div');
+    this.panel.className = 'multi-select-panel';
+    this.panel.setAttribute('role', 'listbox');
+    this.panel.setAttribute('aria-multiselectable', 'true');
+    this.panel.hidden = true;
+    this.container.appendChild(this.panel);
+    this._updateLabel();
+  }
+
+  setOptions(options) {
+    this.options = options.map(o => ({ id: String(o.id), name: String(o.name) }));
+    this.panel.innerHTML = '';
+    for (const opt of this.options) {
+      const label = document.createElement('label');
+      label.className = 'multi-select-option';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.value = opt.id;
+      cb.checked = this.selected.has(opt.id);
+      if (cb.checked) label.classList.add('checked');
+      cb.addEventListener('change', () => {
+        if (cb.checked) this.selected.add(opt.id);
+        else this.selected.delete(opt.id);
+        label.classList.toggle('checked', cb.checked);
+        this._updateLabel();
+        this.container.dispatchEvent(new CustomEvent('change', { detail: this.getValue() }));
+      });
+      const text = document.createElement('span');
+      text.textContent = opt.name;
+      label.append(cb, text);
+      this.panel.appendChild(label);
+    }
+    // Purge from selected anything that no longer exists in options — otherwise
+    // stale ids from a previous filter set would silently ride along in URLs.
+    for (const id of Array.from(this.selected)) {
+      if (!this.options.find(o => o.id === id)) this.selected.delete(id);
+    }
+    this._updateLabel();
+  }
+
+  setValue(ids) {
+    this.selected = new Set((ids || []).map(String));
+    // Re-render checkbox states without rebuilding the whole panel.
+    this.panel.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.checked = this.selected.has(cb.value);
+      cb.parentElement.classList.toggle('checked', cb.checked);
+    });
+    this._updateLabel();
+  }
+
+  getValue() {
+    return Array.from(this.selected);
+  }
+
+  clear() { this.setValue([]); }
+
+  _updateLabel() {
+    const n = this.selected.size;
+    if (n === 0) {
+      this.toggle.textContent = this.emptyLabel;
+      this.toggle.dataset.empty = 'true';
+    } else if (n === 1) {
+      const id = Array.from(this.selected)[0];
+      const opt = this.options.find(o => o.id === id);
+      this.toggle.textContent = opt ? opt.name : `1 ${this.groupLabel}`;
+      this.toggle.dataset.empty = 'false';
+    } else {
+      this.toggle.textContent = `${this.groupLabel}: ${n}`;
+      this.toggle.dataset.empty = 'false';
+    }
+  }
+
+  open() {
+    if (MultiSelect._openInstance && MultiSelect._openInstance !== this) {
+      MultiSelect._openInstance.close();
+    }
+    this.container.classList.add('open');
+    this.panel.hidden = false;
+    this.toggle.setAttribute('aria-expanded', 'true');
+    MultiSelect._openInstance = this;
+  }
+
+  close() {
+    this.container.classList.remove('open');
+    this.panel.hidden = true;
+    this.toggle.setAttribute('aria-expanded', 'false');
+    if (MultiSelect._openInstance === this) MultiSelect._openInstance = null;
+  }
+}
+
 const gallery = {
   media: [],
   page: 1,
@@ -76,7 +215,9 @@ const gallery = {
     // real geometry — otherwise the page is a blank white block for the
     // 200-800ms it takes categories + media to arrive.
     this.renderInitialSkeletons();
-    // Categories + subcategories are independent — fetch in parallel
+    // Categories + subcategories are independent — fetch in parallel.
+    // Age filter is populated synchronously from meta app-config.
+    this.initAgeFilter();
     await Promise.all([this.loadCategories(), this.loadSubcategories()]);
     this.restoreFiltersFromURL();
     this.setupFilters();
@@ -133,28 +274,31 @@ const gallery = {
   },
 
   setupFilters() {
-    const categoryFilter = document.getElementById('categoryFilter');
-    const subcategoryFilter = document.getElementById('subcategoryFilter');
-    const ageFilter = document.getElementById('ageFilter');
     const sortFilter = document.getElementById('sortFilter');
     const applyBtn = document.getElementById('applyFilters');
     const clearBtn = document.getElementById('clearFilters');
+    // MultiSelect instances are created in loadCategories / loadSubcategories /
+    // initAgeFilter and stored on `this` so all filter methods can hit them.
+    const catMs = this._categoryMs;
+    const subMs = this._subcategoryMs;
+    const ageMs = this._ageMs;
 
-    if (categoryFilter) {
-      categoryFilter.addEventListener('change', async () => {
-        if (subcategoryFilter) {
-          const subs = await categories.loadSubcategories(categoryFilter.value || null);
-          categories.populateSelect(subcategoryFilter, subs, 'Все подкатегории');
-        }
-      });
-    }
+    // Restore checked-state from filters loaded from the URL (see
+    // restoreFiltersFromURL). Splits comma-separated strings back into arrays.
+    const csvToArray = (s) => (s ? String(s).split(',').filter(Boolean) : []);
+    if (catMs) catMs.setValue(csvToArray(this.filters.category_id));
+    if (subMs) subMs.setValue(csvToArray(this.filters.subcategory_id));
+    if (ageMs) ageMs.setValue(csvToArray(this.filters.age));
+    if (sortFilter) sortFilter.value = this.filters.sort || 'newest';
 
     const apply = () => {
       const nextSort = sortFilter?.value || 'newest';
       this.filters = {
-        category_id: categoryFilter?.value || '',
-        subcategory_id: subcategoryFilter?.value || '',
-        age: ageFilter?.value || '',
+        // Multi-value filters go over the wire as comma-separated ids —
+        // the models parse each of these into IN(...) clauses.
+        category_id: catMs ? catMs.getValue().join(',') : '',
+        subcategory_id: subMs ? subMs.getValue().join(',') : '',
+        age: ageMs ? ageMs.getValue().join(',') : '',
         sort: nextSort,
         // Seeded random shuffle. Without a seed the server rerandomizes on
         // every page fetch, so LIMIT/OFFSET pagination duplicates items
@@ -173,9 +317,9 @@ const gallery = {
 
     if (clearBtn) {
       clearBtn.addEventListener('click', () => {
-        if (categoryFilter) categoryFilter.value = '';
-        if (subcategoryFilter) subcategoryFilter.value = '';
-        if (ageFilter) ageFilter.value = '';
+        catMs?.clear();
+        subMs?.clear();
+        ageMs?.clear();
         if (sortFilter) sortFilter.value = 'newest';
         this.filters = {};
         this.updateURL();
@@ -183,12 +327,6 @@ const gallery = {
         this.loadMore();
       });
     }
-
-    // Set initial values from URL
-    if (categoryFilter) categoryFilter.value = this.filters.category_id || '';
-    if (subcategoryFilter) subcategoryFilter.value = this.filters.subcategory_id || '';
-    if (ageFilter) ageFilter.value = this.filters.age || '';
-    if (sortFilter) sortFilter.value = this.filters.sort || 'newest';
   },
 
   restoreFiltersFromURL() {
@@ -244,18 +382,38 @@ const gallery = {
 
   async loadCategories() {
     const cats = await categories.loadAll();
-    const categoryFilter = document.getElementById('categoryFilter');
-    if (categoryFilter) {
-      categories.populateSelect(categoryFilter, cats, 'Все категории');
-    }
+    const el = document.getElementById('categoryFilter');
+    if (!el) return;
+    this._categoryMs ||= new MultiSelect(el);
+    this._categoryMs.setOptions(cats.map(c => ({ id: c.id, name: c.name })));
   },
 
   async loadSubcategories() {
+    // Пользователь: "подкатегории в каждой категории одинаковые" — поэтому
+    // всегда грузим весь список подкатегорий (loadSubcategories(null) в
+    // main.js уже дедуплицирует по имени и склеивает id через запятую).
+    // Список НЕ пересобирается при смене категорий — user-friendly и
+    // экономит round-trip.
     const subs = await categories.loadSubcategories();
-    const subcategoryFilter = document.getElementById('subcategoryFilter');
-    if (subcategoryFilter) {
-      categories.populateSelect(subcategoryFilter, subs, 'Все подкатегории');
-    }
+    const el = document.getElementById('subcategoryFilter');
+    if (!el) return;
+    this._subcategoryMs ||= new MultiSelect(el);
+    this._subcategoryMs.setOptions(subs.map(s => ({ id: s.id, name: s.name })));
+  },
+
+  initAgeFilter() {
+    const el = document.getElementById('ageFilter');
+    if (!el) return;
+    this._ageMs ||= new MultiSelect(el);
+    // AGE_RATINGS приходит из <meta name="app-config"> — общий источник
+    // истины и для сервера, и для клиента (см. public/js/constants.js).
+    const meta = document.querySelector('meta[name="app-config"]');
+    let ages = [13, 14, 15, 16, 17, 18, 19];
+    try {
+      const cfg = meta ? JSON.parse(meta.content) : null;
+      if (cfg?.ageRatings?.length) ages = cfg.ageRatings;
+    } catch {}
+    this._ageMs.setOptions(ages.map(a => ({ id: a, name: a >= 19 ? `${a}+` : String(a) })));
   },
 
   setupInfiniteScroll() {

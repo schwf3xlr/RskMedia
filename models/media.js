@@ -16,23 +16,32 @@ function buildOrderBy(sort, randomSeed, params) {
   return { order: SORT_MAP[sort] || 'm.uploaded_at DESC', idxOffset: 0 };
 }
 
+// Comma-separated ids/values → array of numbers. Used for multi-select
+// filters where the client sends e.g. "1,3,5" for category_id / age / etc.
+// Silently drops NaN entries so a stray "" or garbage doesn't blow up the
+// IN() clause.
+function parseIds(raw) {
+  if (raw === undefined || raw === null || raw === '') return [];
+  return String(raw).split(',').map(Number).filter(n => !Number.isNaN(n));
+}
+
 function buildWhere({ categoryId, subcategoryId, age, type, missingFields, query, params, idx = 1 }) {
   let queryStr = ' WHERE 1=1';
 
-  if (categoryId) {
-    queryStr += ` AND m.category_id = $${idx++}`;
-    params.push(categoryId);
+  const categoryIds = parseIds(categoryId);
+  if (categoryIds.length > 0) {
+    queryStr += ` AND m.category_id IN (${categoryIds.map(() => `$${idx++}`).join(',')})`;
+    params.push(...categoryIds);
   }
-  if (subcategoryId) {
-    const ids = String(subcategoryId).split(',').map(Number).filter(n => !isNaN(n));
-    if (ids.length > 0) {
-      queryStr += ` AND m.subcategory_id IN (${ids.map(() => `$${idx++}`).join(',')})`;
-      params.push(...ids);
-    }
+  const subcategoryIds = parseIds(subcategoryId);
+  if (subcategoryIds.length > 0) {
+    queryStr += ` AND m.subcategory_id IN (${subcategoryIds.map(() => `$${idx++}`).join(',')})`;
+    params.push(...subcategoryIds);
   }
-  if (age !== undefined && age !== null && age !== '') {
-    queryStr += ` AND m.age_rating = $${idx++}`;
-    params.push(age);
+  const ages = parseIds(age);
+  if (ages.length > 0) {
+    queryStr += ` AND m.age_rating IN (${ages.map(() => `$${idx++}`).join(',')})`;
+    params.push(...ages);
   }
   if (type === 'photo' || type === 'video') {
     queryStr += ` AND m.type = $${idx++}`;

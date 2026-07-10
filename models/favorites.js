@@ -12,22 +12,29 @@ function buildOrderBy(sort, randomSeed, params, fallback) {
   return { order: SORT_MAP[sort] || fallback, idxOffset: 0 };
 }
 
+// See models/media.js for parseIds — same purpose: accept comma-separated
+// multi-select values from the client (e.g. category_id=1,3&age=13,15).
+function parseIds(raw) {
+  if (raw === undefined || raw === null || raw === '') return [];
+  return String(raw).split(',').map(Number).filter(n => !Number.isNaN(n));
+}
+
 function buildWhere({ categoryId, subcategoryId, age, type, params, idx = 2 }) {
   let query = '';
-  if (categoryId) {
-    query += ` AND m.category_id = $${idx++}`;
-    params.push(categoryId);
+  const categoryIds = parseIds(categoryId);
+  if (categoryIds.length > 0) {
+    query += ` AND m.category_id IN (${categoryIds.map(() => `$${idx++}`).join(',')})`;
+    params.push(...categoryIds);
   }
-  if (subcategoryId) {
-    const ids = String(subcategoryId).split(',').map(Number).filter(n => !isNaN(n));
-    if (ids.length > 0) {
-      query += ` AND m.subcategory_id IN (${ids.map(() => `$${idx++}`).join(',')})`;
-      params.push(...ids);
-    }
+  const subcategoryIds = parseIds(subcategoryId);
+  if (subcategoryIds.length > 0) {
+    query += ` AND m.subcategory_id IN (${subcategoryIds.map(() => `$${idx++}`).join(',')})`;
+    params.push(...subcategoryIds);
   }
-  if (age !== undefined && age !== null && age !== '') {
-    query += ` AND m.age_rating = $${idx++}`;
-    params.push(age);
+  const ages = parseIds(age);
+  if (ages.length > 0) {
+    query += ` AND m.age_rating IN (${ages.map(() => `$${idx++}`).join(',')})`;
+    params.push(...ages);
   }
   if (type === 'photo' || type === 'video') {
     query += ` AND m.type = $${idx++}`;
