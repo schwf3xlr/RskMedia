@@ -1001,6 +1001,19 @@ body.modal-open .shortcut-help-btn {
   }
 }
 
+/* Mobile: скрываем UI-элементы, ориентированные на десктоп.
+   - pull-to-refresh: индикатор + JS-гейт по display:none в player.js
+   - density-picker: на маленьких экранах CSS grid уже даёт разумную
+     плотность, ручной выбор только съедает место в filter-row
+   - shortcut-help-btn: клавиатурных шорткатов на телефоне нет */
+@media (max-width: 768px) {
+  .pull-to-refresh,
+  .density-picker,
+  .shortcut-help-btn {
+    display: none !important;
+  }
+}
+
 /* === SKELETON === */
 .skeleton-grid {
   display: grid;

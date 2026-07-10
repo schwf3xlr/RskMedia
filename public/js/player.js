@@ -1417,6 +1417,12 @@ const gallery = {
     // Skip on desktop browsers (they don't fire touch events).
     if (!('ontouchstart' in window) && !navigator.maxTouchPoints) return;
 
+    // Respect the CSS: if the indicator is display:none (mobile stylesheet
+    // opts out of pull-to-refresh), don't attach the touchmove hijack
+    // either — otherwise the user's pull gesture still triggers a
+    // location.reload() with no visual feedback.
+    if (getComputedStyle(indicator).display === 'none') return;
+
     const THRESHOLD = 80;
     const MAX_PULL = 140;
     let startY = 0;
