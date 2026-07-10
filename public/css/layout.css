@@ -410,12 +410,15 @@
   color: var(--text-primary);
 }
 
-/* На мобильных панель может уходить за правый край — прижимаем к правому
-   краю тогглера, чтобы не улетала за viewport. */
+/* На мобильных .filters-row переключается в flex-direction: column и все
+   контролы во всю ширину. Просто выравниваем multi-select под остальные
+   контролы этой строки — width: 100%, min-width сброшен. Ставить flex
+   с процентным basis НЕЛЬЗЯ: в column-режиме basis влияет на высоту,
+   что даёт "плоские" тогглеры вдвое ниже соседних <select>. */
 @media (max-width: 768px) {
   .multi-select {
+    width: 100%;
     min-width: 0;
-    flex: 1 1 calc(50% - 6px);
   }
   .multi-select-panel {
     left: auto;
