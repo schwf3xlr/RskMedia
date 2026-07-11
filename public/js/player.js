@@ -73,6 +73,13 @@ class MultiSelect {
     this.container = container;
     this.emptyLabel = container.dataset.empty || 'Все';
     this.groupLabel = container.dataset.label || 'элементы';
+    // 'multi' (default): чекбоксы, панель остаётся открытой при клике,
+    //                    getValue() → массив всех выбранных id.
+    // 'single': радио-поведение, панель закрывается после клика,
+    //           getValue() возвращает массив длины 0 или 1, getSingle()
+    //           — строка или пустая строка. Всегда есть максимум одно
+    //           выбранное значение.
+    this.mode = container.dataset.mode === 'single' ? 'single' : 'multi';
     this.options = [];
     this.selected = new Set();
     this._build();
@@ -95,7 +102,7 @@ class MultiSelect {
     this.panel = document.createElement('div');
     this.panel.className = 'multi-select-panel';
     this.panel.setAttribute('role', 'listbox');
-    this.panel.setAttribute('aria-multiselectable', 'true');
+    if (this.mode === 'multi') this.panel.setAttribute('aria-multiselectable', 'true');
     // Видимость управляется через класс .open на контейнере (см. CSS) —
     // атрибут hidden здесь не работал, потому что базовое правило панели
     // с более высокой специфичностью выставляло display: flex.
@@ -107,24 +114,11 @@ class MultiSelect {
     this.options = options.map(o => ({ id: String(o.id), name: String(o.name) }));
     this.panel.innerHTML = '';
     for (const opt of this.options) {
-      const label = document.createElement('label');
-      label.className = 'multi-select-option';
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.value = opt.id;
-      cb.checked = this.selected.has(opt.id);
-      if (cb.checked) label.classList.add('checked');
-      cb.addEventListener('change', () => {
-        if (cb.checked) this.selected.add(opt.id);
-        else this.selected.delete(opt.id);
-        label.classList.toggle('checked', cb.checked);
-        this._updateLabel();
-        this.container.dispatchEvent(new CustomEvent('change', { detail: this.getValue() }));
-      });
-      const text = document.createElement('span');
-      text.textContent = opt.name;
-      label.append(cb, text);
-      this.panel.appendChild(label);
+      if (this.mode === 'multi') {
+        this.panel.appendChild(this._buildMultiOption(opt));
+      } else {
+        this.panel.appendChild(this._buildSingleOption(opt));
+      }
     }
     // Purge from selected anything that no longer exists in options — otherwise
     // stale ids from a previous filter set would silently ride along in URLs.
@@ -134,18 +128,98 @@ class MultiSelect {
     this._updateLabel();
   }
 
-  setValue(ids) {
-    this.selected = new Set((ids || []).map(String));
-    // Re-render checkbox states without rebuilding the whole panel.
-    this.panel.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-      cb.checked = this.selected.has(cb.value);
-      cb.parentElement.classList.toggle('checked', cb.checked);
+  _buildMultiOption(opt) {
+    const label = document.createElement('label');
+    label.className = 'multi-select-option';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = opt.id;
+    cb.checked = this.selected.has(opt.id);
+    if (cb.checked) label.classList.add('checked');
+    cb.addEventListener('change', () => {
+      if (cb.checked) this.selected.add(opt.id);
+      else this.selected.delete(opt.id);
+      label.classList.toggle('checked', cb.checked);
+      this._updateLabel();
+      this.container.dispatchEvent(new CustomEvent('change', { detail: this.getValue() }));
     });
+    const text = document.createElement('span');
+    text.textContent = opt.name;
+    label.append(cb, text);
+    return label;
+  }
+
+  _buildSingleOption(opt) {
+    // В single-режиме роль элемента — role="option" (в multi это label с
+    // input+checkbox). Клик выбирает и закрывает панель, как у нативного
+    // <select>. Галочка — inline SVG (без зависимости от Lucide, потому
+    // что элементы создаются динамически).
+    const row = document.createElement('div');
+    row.className = 'multi-select-option single';
+    row.setAttribute('role', 'option');
+    row.tabIndex = 0;
+    if (this.selected.has(opt.id)) {
+      row.classList.add('checked');
+      row.setAttribute('aria-selected', 'true');
+    }
+    const check = document.createElement('span');
+    check.className = 'multi-select-check';
+    check.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" ' +
+      'stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">' +
+      '<polyline points="20 6 9 17 4 12"/></svg>';
+    const text = document.createElement('span');
+    text.textContent = opt.name;
+    row.append(check, text);
+    const pick = () => {
+      this.selected = new Set([opt.id]);
+      this.panel.querySelectorAll('.multi-select-option').forEach(el => {
+        const isThis = el === row;
+        el.classList.toggle('checked', isThis);
+        if (isThis) el.setAttribute('aria-selected', 'true');
+        else el.removeAttribute('aria-selected');
+      });
+      this._updateLabel();
+      this.container.dispatchEvent(new CustomEvent('change', { detail: this.getValue() }));
+      this.close();
+    };
+    row.addEventListener('click', pick);
+    row.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); }
+    });
+    return row;
+  }
+
+  setValue(ids) {
+    const list = Array.isArray(ids) ? ids : (ids ? [ids] : []);
+    this.selected = new Set(list.map(String));
+    if (this.mode === 'multi') {
+      this.panel.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        cb.checked = this.selected.has(cb.value);
+        cb.parentElement.classList.toggle('checked', cb.checked);
+      });
+    } else {
+      // In single mode, options are div rows — sync their .checked class.
+      this.panel.querySelectorAll('.multi-select-option').forEach((row, i) => {
+        const opt = this.options[i];
+        if (!opt) return;
+        const isSel = this.selected.has(opt.id);
+        row.classList.toggle('checked', isSel);
+        if (isSel) row.setAttribute('aria-selected', 'true');
+        else row.removeAttribute('aria-selected');
+      });
+    }
     this._updateLabel();
   }
 
   getValue() {
     return Array.from(this.selected);
+  }
+
+  // Convenience getter for single mode — returns the string or '' when
+  // nothing is selected.
+  getSingle() {
+    return Array.from(this.selected)[0] || '';
   }
 
   clear() { this.setValue([]); }
@@ -216,8 +290,9 @@ const gallery = {
     // 200-800ms it takes categories + media to arrive.
     this.renderInitialSkeletons();
     // Categories + subcategories are independent — fetch in parallel.
-    // Age filter is populated synchronously from meta app-config.
+    // Age + sort фильтры инициализируются синхронно из статических данных.
     this.initAgeFilter();
+    this.initSortFilter();
     await Promise.all([this.loadCategories(), this.loadSubcategories()]);
     this.restoreFiltersFromURL();
     this.setupFilters();
@@ -274,14 +349,15 @@ const gallery = {
   },
 
   setupFilters() {
-    const sortFilter = document.getElementById('sortFilter');
     const applyBtn = document.getElementById('applyFilters');
     const clearBtn = document.getElementById('clearFilters');
     // MultiSelect instances are created in loadCategories / loadSubcategories /
-    // initAgeFilter and stored on `this` so all filter methods can hit them.
+    // initAgeFilter / initSortFilter and stored on `this` so all filter
+    // methods can hit them.
     const catMs = this._categoryMs;
     const subMs = this._subcategoryMs;
     const ageMs = this._ageMs;
+    const sortMs = this._sortMs;
 
     // Restore checked-state from filters loaded from the URL (see
     // restoreFiltersFromURL). Splits comma-separated strings back into arrays.
@@ -289,10 +365,10 @@ const gallery = {
     if (catMs) catMs.setValue(csvToArray(this.filters.category_id));
     if (subMs) subMs.setValue(csvToArray(this.filters.subcategory_id));
     if (ageMs) ageMs.setValue(csvToArray(this.filters.age));
-    if (sortFilter) sortFilter.value = this.filters.sort || 'newest';
+    if (sortMs) sortMs.setValue([this.filters.sort || 'newest']);
 
     const apply = () => {
-      const nextSort = sortFilter?.value || 'newest';
+      const nextSort = sortMs?.getSingle() || 'newest';
       this.filters = {
         // Multi-value filters go over the wire as comma-separated ids —
         // the models parse each of these into IN(...) clauses.
@@ -320,7 +396,10 @@ const gallery = {
         catMs?.clear();
         subMs?.clear();
         ageMs?.clear();
-        if (sortFilter) sortFilter.value = 'newest';
+        // Sort всегда имеет ровно одно значение — сброс возвращает дефолт,
+        // а не очищает (иначе тогглер показал бы "Сортировка" вместо
+        // "Новые", что вводило бы в заблуждение).
+        if (sortMs) sortMs.setValue(['newest']);
         this.filters = {};
         this.updateURL();
         this.resetGrid();
@@ -414,6 +493,29 @@ const gallery = {
       if (cfg?.ageRatings?.length) ages = cfg.ageRatings;
     } catch {}
     this._ageMs.setOptions(ages.map(a => ({ id: a, name: a >= 19 ? `${a}+` : String(a) })));
+  },
+
+  initSortFilter() {
+    const el = document.getElementById('sortFilter');
+    if (!el) return;
+    // data-mode="single" в HTML переключает MultiSelect в радио-режим:
+    // одно значение, панель закрывается после выбора, галочка вместо
+    // чекбокса — как нативный <select>, но в стиль сайта.
+    this._sortMs ||= new MultiSelect(el);
+    // Список keys совпадает с SORT_MAP + TYPE_SORT_MAP в config/constants.js.
+    // Порядок и подписи повторяют прежний <select>, чтобы UX не менялся.
+    this._sortMs.setOptions([
+      { id: 'newest',   name: 'Новые' },
+      { id: 'oldest',   name: 'Старые' },
+      { id: 'name',     name: 'По имени' },
+      { id: 'photos',   name: 'Фото' },
+      { id: 'videos',   name: 'Видео' },
+      { id: 'random',   name: 'Случайно' },
+      { id: 'age_desc', name: 'По возрасту ↓' },
+      { id: 'age_asc',  name: 'По возрасту ↑' },
+    ]);
+    // Дефолт "Новые" — тогглер никогда не пустой, даже до restoreFiltersFromURL.
+    this._sortMs.setValue(['newest']);
   },
 
   setupInfiniteScroll() {

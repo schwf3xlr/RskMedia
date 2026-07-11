@@ -410,6 +410,33 @@
   color: var(--text-primary);
 }
 
+/* Single-режим: строка без чекбокса, слева резервируем место под галочку
+   такого же размера как чекбокс — тогда все строки визуально выровнены,
+   и выбранная строка получает cheap green чек внутри. */
+.multi-select-option.single {
+  padding-left: 8px;
+}
+.multi-select-check {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: transparent;
+  transition: color 0.12s;
+}
+.multi-select-option.single.checked {
+  background: rgba(99, 102, 241, 0.10);
+}
+.multi-select-option.single.checked .multi-select-check {
+  color: var(--accent);
+}
+.multi-select-option.single:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 /* На мобильных .filters-row переключается в flex-direction: column и все
    контролы во всю ширину. Просто выравниваем multi-select под остальные
    контролы этой строки — width: 100%, min-width сброшен. Ставить flex

@@ -10,16 +10,7 @@
       <div class="multi-select" id="categoryFilter" data-empty="Все категории" data-label="категории"></div>
       <div class="multi-select" id="subcategoryFilter" data-empty="Все подкатегории" data-label="подкатегории"></div>
       <div class="multi-select" id="ageFilter" data-empty="Все возраста" data-label="возраста"></div>
-      <select class="filter-select" id="sortFilter">
-        <option value="newest">Новые</option>
-        <option value="oldest">Старые</option>
-        <option value="name">По имени</option>
-        <option value="photos">Фото</option>
-        <option value="videos">Видео</option>
-        <option value="random">Случайно</option>
-        <option value="age_desc">По возрасту ↓</option>
-        <option value="age_asc">По возрасту ↑</option>
-      </select>
+      <div class="multi-select" id="sortFilter" data-mode="single" data-empty="Сортировка" data-label="сортировка"></div>
       <button class="btn btn-primary" id="applyFilters">
         <i data-lucide="filter" class="icon-md"></i>
         Применить
