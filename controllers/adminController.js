@@ -168,13 +168,18 @@ const AdminController = {
         },
         tokens: {
           required: ['token_hash', 'type'],
-          allowed: ['id', 'token_hash', 'type', 'created_at', 'expires_at', 'is_active'],
-          types: { id: 'int', token_hash: 'string', type: 'enum:client,admin', created_at: 'datetime', expires_at: 'datetime', is_active: 'bool' },
+          // token_lookup — SHA256-хеш plaintext-токена, добавлен миграцией
+          // для O(1) поиска. Backup её экспортирует (реальная колонка в
+          // information_schema), поэтому restore обязан знать про неё.
+          allowed: ['id', 'token_hash', 'token_lookup', 'type', 'created_at', 'expires_at', 'is_active'],
+          types: { id: 'int', token_hash: 'string', token_lookup: 'string', type: 'enum:client,admin', created_at: 'datetime', expires_at: 'datetime', is_active: 'bool' },
         },
         media: {
           required: ['type', 's3_key', 'thumbnail_s3_key'],
-          allowed: ['id', 'type', 's3_key', 'thumbnail_s3_key', 'display_s3_key', 'file_size', 'category_id', 'subcategory_id', 'age_rating', 'phash', 'uploaded_at'],
-          types: { id: 'int', type: 'enum:photo,video', s3_key: 'string', thumbnail_s3_key: 'string', display_s3_key: 'string', file_size: 'int', category_id: 'int', subcategory_id: 'int', age_rating: 'int', phash: 'string', uploaded_at: 'datetime' },
+          // preview_s3_key — анимированный WebP для hover-preview на видео,
+          // добавлен миграцией одновременно с §5.2.
+          allowed: ['id', 'type', 's3_key', 'thumbnail_s3_key', 'display_s3_key', 'preview_s3_key', 'file_size', 'category_id', 'subcategory_id', 'age_rating', 'phash', 'uploaded_at'],
+          types: { id: 'int', type: 'enum:photo,video', s3_key: 'string', thumbnail_s3_key: 'string', display_s3_key: 'string', preview_s3_key: 'string', file_size: 'int', category_id: 'int', subcategory_id: 'int', age_rating: 'int', phash: 'string', uploaded_at: 'datetime' },
         },
         favorites: {
           required: ['token_id', 'media_id'],
@@ -198,6 +203,13 @@ const AdminController = {
         }
       };
 
+      // Колонки, которые встретились в бэкапе, но не входят ни в allowed,
+      // ни в существующую схему. Раньше это фейлило restore целиком, из-за
+      // чего каждая новая миграция ломала совместимость со старым файлом
+      // (см. token_lookup, preview_s3_key). Теперь молча пропускаем —
+      // фильтрация при INSERT ниже всё равно оставит только пересечение
+      // allowed × existingColumns. Одного лога на таблицу достаточно.
+      const skippedByTable = {};
       for (const table of BACKUP_TABLES) {
         const rules = validators[table];
         const existingColumns = tableColumns[table];
@@ -207,9 +219,10 @@ const AdminController = {
             return res.status(400).json({ error: `Строка ${i} в таблице ${table} не является объектом` });
           }
           const rowColumns = Object.keys(row);
-          const unexpected = rowColumns.filter(c => !rules.allowed.includes(c) || !existingColumns.includes(c));
-          if (unexpected.length > 0) {
-            return res.status(400).json({ error: `Таблица ${table}, строка ${i}: неизвестные колонки ${unexpected.join(', ')}` });
+          const unknown = rowColumns.filter(c => !rules.allowed.includes(c) || !existingColumns.includes(c));
+          if (unknown.length > 0) {
+            skippedByTable[table] = skippedByTable[table] || new Set();
+            unknown.forEach(c => skippedByTable[table].add(c));
           }
           for (const reqField of rules.required) {
             if (row[reqField] === undefined || row[reqField] === null || row[reqField] === '') {
@@ -223,6 +236,9 @@ const AdminController = {
             }
           }
         }
+      }
+      for (const [table, cols] of Object.entries(skippedByTable)) {
+        console.warn(`[restore] table=${table} skipping columns not in schema/allowed: ${Array.from(cols).join(', ')}`);
       }
 
       await client.query('BEGIN');
