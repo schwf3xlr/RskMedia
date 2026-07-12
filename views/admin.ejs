@@ -59,18 +59,9 @@
           <input type="file" id="singleFile" class="file-input-hidden" accept="image/*,video/*" required>
         </div>
         <div class="upload-form-row">
-          <select class="filter-select" id="singleCategory">
-            <option value="">Категория</option>
-          </select>
-          <select class="filter-select" id="singleSubcategory">
-            <option value="">Подкатегория</option>
-          </select>
-          <select class="filter-select" id="singleAge">
-            <option value="">Возраст</option>
-            <% for(let i of AGE_RATINGS) { %>
-            <option value="<%= i %>"><%= i >= 19 ? i + '+' : i %></option>
-            <% } %>
-          </select>
+          <div class="multi-select" id="singleCategory" data-mode="single" data-empty="Категория"></div>
+          <div class="multi-select" id="singleSubcategory" data-mode="single" data-empty="Подкатегория"></div>
+          <div class="multi-select" id="singleAge" data-mode="single" data-empty="Возраст"></div>
           <button type="submit" class="btn btn-primary">
             <i data-lucide="upload" class="icon-md"></i>
             Загрузить
@@ -97,18 +88,9 @@
           <input type="file" id="batchFiles" class="file-input-hidden" multiple accept="image/*,video/*" required>
         </div>
         <div class="upload-form-row">
-          <select class="filter-select" id="batchCategory">
-            <option value="">Категория</option>
-          </select>
-          <select class="filter-select" id="batchSubcategory">
-            <option value="">Подкатегория</option>
-          </select>
-          <select class="filter-select" id="batchAge">
-            <option value="">Возраст</option>
-            <% for(let i of AGE_RATINGS) { %>
-            <option value="<%= i %>"><%= i >= 19 ? i + '+' : i %></option>
-            <% } %>
-          </select>
+          <div class="multi-select" id="batchCategory" data-mode="single" data-empty="Категория"></div>
+          <div class="multi-select" id="batchSubcategory" data-mode="single" data-empty="Подкатегория"></div>
+          <div class="multi-select" id="batchAge" data-mode="single" data-empty="Возраст"></div>
           <button type="submit" class="btn btn-primary">
             <i data-lucide="upload" class="icon-md"></i>
             Загрузить
@@ -150,18 +132,9 @@
           <input type="file" id="zipFile" class="file-input-hidden" accept=".zip,application/zip" required>
         </div>
         <div class="upload-form-row">
-          <select class="filter-select" id="zipCategory">
-            <option value="">Категория</option>
-          </select>
-          <select class="filter-select" id="zipSubcategory">
-            <option value="">Подкатегория</option>
-          </select>
-          <select class="filter-select" id="zipAge">
-            <option value="">Возраст</option>
-            <% for(let i of AGE_RATINGS) { %>
-            <option value="<%= i %>"><%= i >= 19 ? i + '+' : i %></option>
-            <% } %>
-          </select>
+          <div class="multi-select" id="zipCategory" data-mode="single" data-empty="Категория"></div>
+          <div class="multi-select" id="zipSubcategory" data-mode="single" data-empty="Подкатегория"></div>
+          <div class="multi-select" id="zipAge" data-mode="single" data-empty="Возраст"></div>
           <button type="submit" class="btn btn-primary">
             <i data-lucide="upload" class="icon-md"></i>
             Загрузить архив
@@ -201,18 +174,9 @@
         <i data-lucide="check-square" class="icon-sm"></i>
         Выбрать всё
       </button>
-      <select class="filter-select" id="batchSetCategory">
-        <option value="">Установить категорию</option>
-      </select>
-      <select class="filter-select" id="batchSetSubcategory">
-        <option value="">Установить подкатегорию</option>
-      </select>
-      <select class="filter-select" id="batchSetAge">
-        <option value="">Установить возраст</option>
-        <% for(let i of AGE_RATINGS) { %>
-        <option value="<%= i %>"><%= i >= 19 ? i + '+' : i %></option>
-        <% } %>
-      </select>
+      <div class="multi-select" id="batchSetCategory" data-mode="single" data-empty="Установить категорию"></div>
+      <div class="multi-select" id="batchSetSubcategory" data-mode="single" data-empty="Установить подкатегорию"></div>
+      <div class="multi-select" id="batchSetAge" data-mode="single" data-empty="Установить возраст"></div>
       <button class="btn btn-primary" id="applyBatch">
         <i data-lucide="check" class="icon-md"></i>
         Применить
@@ -242,9 +206,7 @@
     <div class="upload-card">
       <div class="upload-card-title">Добавить подкатегорию</div>
       <div class="category-form">
-        <select id="newSubcategoryCategory" class="filter-select">
-          <option value="">Выберите категорию</option>
-        </select>
+        <div class="multi-select" id="newSubcategoryCategory" data-mode="single" data-empty="Выберите категорию"></div>
         <input type="text" class="category-input" id="newSubcategoryName" placeholder="Название подкатегории">
         <button class="btn btn-primary" id="createSubcategoryBtn">
           <i data-lucide="plus" class="icon-md"></i>

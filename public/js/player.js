@@ -1,4 +1,4 @@
-import { auth, api, toast, categories, favorites, events } from './main.js';
+import { auth, api, toast, categories, favorites, events, MultiSelect } from './main.js';
 
 function showConfirm(message, options = {}) {
   return new Promise(resolve => {
@@ -41,219 +41,6 @@ function showConfirm(message, options = {}) {
 // will silently truncate. Random.random() * 2^31 covers the whole range.
 function newRandomSeed() {
   return Math.floor(Math.random() * 0x7fffffff) + 1;
-}
-
-// Custom multi-select dropdown backed by a checkbox list. Used instead of
-// <select multiple> because the native control on mobile is awkward (opens a
-// system-level picker that hides half the filter row) and doesn't compose
-// well with our existing filter styling.
-//
-// Contract: attach to a <div class="multi-select" id="..." data-empty="…"
-// data-label="…"></div>. Container becomes fully controlled by this class —
-// contents get replaced. Use setOptions([{ id, name }]), setValue([ids]),
-// getValue() → array of string ids. Only one panel opens at a time.
-class MultiSelect {
-  static _openInstance = null;
-  static _globalListenerAttached = false;
-  static _attachGlobalListener() {
-    if (MultiSelect._globalListenerAttached) return;
-    MultiSelect._globalListenerAttached = true;
-    document.addEventListener('click', (e) => {
-      const open = MultiSelect._openInstance;
-      if (open && !open.container.contains(e.target)) open.close();
-    });
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && MultiSelect._openInstance) {
-        MultiSelect._openInstance.close();
-      }
-    });
-  }
-
-  constructor(container) {
-    this.container = container;
-    this.emptyLabel = container.dataset.empty || 'Все';
-    this.groupLabel = container.dataset.label || 'элементы';
-    // 'multi' (default): чекбоксы, панель остаётся открытой при клике,
-    //                    getValue() → массив всех выбранных id.
-    // 'single': радио-поведение, панель закрывается после клика,
-    //           getValue() возвращает массив длины 0 или 1, getSingle()
-    //           — строка или пустая строка. Всегда есть максимум одно
-    //           выбранное значение.
-    this.mode = container.dataset.mode === 'single' ? 'single' : 'multi';
-    this.options = [];
-    this.selected = new Set();
-    this._build();
-    MultiSelect._attachGlobalListener();
-  }
-
-  _build() {
-    this.container.innerHTML = '';
-    this.toggle = document.createElement('button');
-    this.toggle.type = 'button';
-    this.toggle.className = 'multi-select-toggle';
-    this.toggle.setAttribute('aria-haspopup', 'listbox');
-    this.toggle.setAttribute('aria-expanded', 'false');
-    this.toggle.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.container.classList.contains('open') ? this.close() : this.open();
-    });
-    this.container.appendChild(this.toggle);
-
-    this.panel = document.createElement('div');
-    this.panel.className = 'multi-select-panel';
-    this.panel.setAttribute('role', 'listbox');
-    if (this.mode === 'multi') this.panel.setAttribute('aria-multiselectable', 'true');
-    // Видимость управляется через класс .open на контейнере (см. CSS) —
-    // атрибут hidden здесь не работал, потому что базовое правило панели
-    // с более высокой специфичностью выставляло display: flex.
-    this.container.appendChild(this.panel);
-    this._updateLabel();
-  }
-
-  setOptions(options) {
-    this.options = options.map(o => ({ id: String(o.id), name: String(o.name) }));
-    this.panel.innerHTML = '';
-    for (const opt of this.options) {
-      if (this.mode === 'multi') {
-        this.panel.appendChild(this._buildMultiOption(opt));
-      } else {
-        this.panel.appendChild(this._buildSingleOption(opt));
-      }
-    }
-    // Purge from selected anything that no longer exists in options — otherwise
-    // stale ids from a previous filter set would silently ride along in URLs.
-    for (const id of Array.from(this.selected)) {
-      if (!this.options.find(o => o.id === id)) this.selected.delete(id);
-    }
-    this._updateLabel();
-  }
-
-  _buildMultiOption(opt) {
-    const label = document.createElement('label');
-    label.className = 'multi-select-option';
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.value = opt.id;
-    cb.checked = this.selected.has(opt.id);
-    if (cb.checked) label.classList.add('checked');
-    cb.addEventListener('change', () => {
-      if (cb.checked) this.selected.add(opt.id);
-      else this.selected.delete(opt.id);
-      label.classList.toggle('checked', cb.checked);
-      this._updateLabel();
-      this.container.dispatchEvent(new CustomEvent('change', { detail: this.getValue() }));
-    });
-    const text = document.createElement('span');
-    text.textContent = opt.name;
-    label.append(cb, text);
-    return label;
-  }
-
-  _buildSingleOption(opt) {
-    // В single-режиме роль элемента — role="option" (в multi это label с
-    // input+checkbox). Клик выбирает и закрывает панель, как у нативного
-    // <select>. Галочка — inline SVG (без зависимости от Lucide, потому
-    // что элементы создаются динамически).
-    const row = document.createElement('div');
-    row.className = 'multi-select-option single';
-    row.setAttribute('role', 'option');
-    row.tabIndex = 0;
-    if (this.selected.has(opt.id)) {
-      row.classList.add('checked');
-      row.setAttribute('aria-selected', 'true');
-    }
-    const check = document.createElement('span');
-    check.className = 'multi-select-check';
-    check.innerHTML =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" ' +
-      'stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">' +
-      '<polyline points="20 6 9 17 4 12"/></svg>';
-    const text = document.createElement('span');
-    text.textContent = opt.name;
-    row.append(check, text);
-    const pick = () => {
-      this.selected = new Set([opt.id]);
-      this.panel.querySelectorAll('.multi-select-option').forEach(el => {
-        const isThis = el === row;
-        el.classList.toggle('checked', isThis);
-        if (isThis) el.setAttribute('aria-selected', 'true');
-        else el.removeAttribute('aria-selected');
-      });
-      this._updateLabel();
-      this.container.dispatchEvent(new CustomEvent('change', { detail: this.getValue() }));
-      this.close();
-    };
-    row.addEventListener('click', pick);
-    row.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); }
-    });
-    return row;
-  }
-
-  setValue(ids) {
-    const list = Array.isArray(ids) ? ids : (ids ? [ids] : []);
-    this.selected = new Set(list.map(String));
-    if (this.mode === 'multi') {
-      this.panel.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-        cb.checked = this.selected.has(cb.value);
-        cb.parentElement.classList.toggle('checked', cb.checked);
-      });
-    } else {
-      // In single mode, options are div rows — sync their .checked class.
-      this.panel.querySelectorAll('.multi-select-option').forEach((row, i) => {
-        const opt = this.options[i];
-        if (!opt) return;
-        const isSel = this.selected.has(opt.id);
-        row.classList.toggle('checked', isSel);
-        if (isSel) row.setAttribute('aria-selected', 'true');
-        else row.removeAttribute('aria-selected');
-      });
-    }
-    this._updateLabel();
-  }
-
-  getValue() {
-    return Array.from(this.selected);
-  }
-
-  // Convenience getter for single mode — returns the string or '' when
-  // nothing is selected.
-  getSingle() {
-    return Array.from(this.selected)[0] || '';
-  }
-
-  clear() { this.setValue([]); }
-
-  _updateLabel() {
-    const n = this.selected.size;
-    if (n === 0) {
-      this.toggle.textContent = this.emptyLabel;
-      this.toggle.dataset.empty = 'true';
-    } else if (n === 1) {
-      const id = Array.from(this.selected)[0];
-      const opt = this.options.find(o => o.id === id);
-      this.toggle.textContent = opt ? opt.name : `1 ${this.groupLabel}`;
-      this.toggle.dataset.empty = 'false';
-    } else {
-      this.toggle.textContent = `${this.groupLabel}: ${n}`;
-      this.toggle.dataset.empty = 'false';
-    }
-  }
-
-  open() {
-    if (MultiSelect._openInstance && MultiSelect._openInstance !== this) {
-      MultiSelect._openInstance.close();
-    }
-    this.container.classList.add('open');
-    this.toggle.setAttribute('aria-expanded', 'true');
-    MultiSelect._openInstance = this;
-  }
-
-  close() {
-    this.container.classList.remove('open');
-    this.toggle.setAttribute('aria-expanded', 'false');
-    if (MultiSelect._openInstance === this) MultiSelect._openInstance = null;
-  }
 }
 
 const gallery = {
@@ -1037,9 +824,24 @@ const gallery = {
     const cancelBtn = document.getElementById('editCancel');
     const saveBtn = document.getElementById('editSave');
     const deleteBtn = document.getElementById('editDelete');
-    const catSelect = document.getElementById('editCategory');
-    const subSelect = document.getElementById('editSubcategory');
-    const ageSelect = document.getElementById('editAge');
+    // Селекты категории/подкатегории/возраста — кастомные MultiSelect
+    // single-mode (в стиль сайта). Инициализируем один раз; опции
+    // категорий/подкатегорий подгружаются при открытии панели.
+    const catMs = new MultiSelect(document.getElementById('editCategory'));
+    const subMs = new MultiSelect(document.getElementById('editSubcategory'));
+    const ageMs = new MultiSelect(document.getElementById('editAge'));
+
+    // AGE_RATINGS фиксированы — заполняем сразу, включая "Не указан" ("").
+    const meta = document.querySelector('meta[name="app-config"]');
+    let ages = [13, 14, 15, 16, 17, 18, 19];
+    try {
+      const cfg = meta ? JSON.parse(meta.content) : null;
+      if (cfg?.ageRatings?.length) ages = cfg.ageRatings;
+    } catch {}
+    ageMs.setOptions([
+      { id: '', name: 'Не указан' },
+      ...ages.map(a => ({ id: a, name: a >= 19 ? `${a}+` : String(a) })),
+    ]);
 
     editBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -1053,19 +855,19 @@ const gallery = {
 
       try {
         const allCats = await categories.loadAll();
-        catSelect.innerHTML = '<option value="">Без категории</option>' +
-          allCats.map(c => `<option value="${c.id}" ${c.id === item.category_id ? 'selected' : ''}>${c.name}</option>`).join('');
+        catMs.setOptions([{ id: '', name: 'Без категории' }, ...allCats.map(c => ({ id: c.id, name: c.name }))]);
+        catMs.setValue(item.category_id ? String(item.category_id) : '');
 
         if (item.category_id) {
           const subs = await categories.loadSubcategories(item.category_id);
-          subSelect.innerHTML = '<option value="">Без подкатегории</option>' +
-            subs.map(s => `<option value="${s.id}" ${s.id === item.subcategory_id ? 'selected' : ''}>${s.name}</option>`).join('');
+          subMs.setOptions([{ id: '', name: 'Без подкатегории' }, ...subs.map(s => ({ id: s.id, name: s.name }))]);
+          subMs.setValue(item.subcategory_id ? String(item.subcategory_id) : '');
         } else {
-          subSelect.innerHTML = '<option value="">Без подкатегории</option>';
+          subMs.setOptions([{ id: '', name: 'Без подкатегории' }]);
+          subMs.setValue('');
         }
 
-        ageSelect.value = item.age_rating !== null && item.age_rating !== undefined ? String(item.age_rating) : '';
-        setTimeout(() => catSelect.focus(), 50);
+        ageMs.setValue(item.age_rating !== null && item.age_rating !== undefined ? String(item.age_rating) : '');
       } catch (err) {
         console.error('Edit panel load error:', err);
         toast.show('Ошибка загрузки', 'error');
@@ -1073,13 +875,16 @@ const gallery = {
       }
     });
 
-    catSelect.addEventListener('change', async () => {
-      subSelect.innerHTML = '<option value="">Без подкатегории</option>';
-      if (catSelect.value) {
+    // При смене категории — перезагружаем подкатегории. Слушаем нашё
+    // кастомное `change` (emit'ится и в single, и в multi режиме).
+    catMs.container.addEventListener('change', async () => {
+      subMs.setOptions([{ id: '', name: 'Без подкатегории' }]);
+      subMs.setValue('');
+      const catId = catMs.getSingle();
+      if (catId) {
         try {
-          const subs = await categories.loadSubcategories(catSelect.value);
-          subSelect.innerHTML = '<option value="">Без подкатегории</option>' +
-            subs.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+          const subs = await categories.loadSubcategories(catId);
+          subMs.setOptions([{ id: '', name: 'Без подкатегории' }, ...subs.map(s => ({ id: s.id, name: s.name }))]);
         } catch (err) {
           console.error('Subcategory load error:', err);
         }
@@ -1098,10 +903,13 @@ const gallery = {
       const item = this._currentModalItem;
       if (!item) return;
       const id = item.id;
+      const catVal = catMs.getSingle();
+      const subVal = subMs.getSingle();
+      const ageVal = ageMs.getSingle();
       const updates = {
-        category_id: catSelect.value || null,
-        subcategory_id: subSelect.value || null,
-        age_rating: ageSelect.value ? parseInt(ageSelect.value, 10) : null,
+        category_id: catVal ? Number(catVal) : null,
+        subcategory_id: subVal ? Number(subVal) : null,
+        age_rating: ageVal ? parseInt(ageVal, 10) : null,
       };
       saveBtn.disabled = true;
       saveBtn.textContent = 'Сохранение...';

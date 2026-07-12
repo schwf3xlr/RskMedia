@@ -77,27 +77,18 @@
         </button>
       </div>
       <div class="edit-panel-body">
-        <label class="edit-field">
+        <div class="edit-field">
           <span class="edit-field-label">Категория</span>
-          <select id="editCategory" class="edit-field-select">
-            <option value="">Без категории</option>
-          </select>
-        </label>
-        <label class="edit-field">
+          <div class="multi-select" id="editCategory" data-mode="single" data-empty="Без категории"></div>
+        </div>
+        <div class="edit-field">
           <span class="edit-field-label">Подкатегория</span>
-          <select id="editSubcategory" class="edit-field-select">
-            <option value="">Без подкатегории</option>
-          </select>
-        </label>
-        <label class="edit-field">
+          <div class="multi-select" id="editSubcategory" data-mode="single" data-empty="Без подкатегории"></div>
+        </div>
+        <div class="edit-field">
           <span class="edit-field-label">Возраст</span>
-          <select id="editAge" class="edit-field-select">
-            <option value="">Не указан</option>
-            <% for(let i of AGE_RATINGS) { %>
-            <option value="<%= i %>"><%= i >= 19 ? i + '+' : i %></option>
-            <% } %>
-          </select>
-        </label>
+          <div class="multi-select" id="editAge" data-mode="single" data-empty="Не указан"></div>
+        </div>
       </div>
       <div class="edit-panel-footer">
         <button class="btn btn-danger btn-delete-media" id="editDelete">

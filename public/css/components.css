@@ -1382,39 +1382,25 @@ body.modal-open .shortcut-help-btn {
   align-items: center;
 }
 
+/* Инлайн-редактор карточки медиа: три MultiSelect с классом
+   .admin-card-select. Никаких background/border здесь — эти стили живут
+   на .multi-select-toggle. Только сжимаем высоту и даём место в flex-ряду. */
 .admin-card-controls .admin-card-select {
   flex: 1;
-  min-width: 60px;
+  min-width: 0;
+  height: 32px;
 }
-
-.admin-card-select {
-  background: var(--bg-3);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a8a9e' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 6px center;
-  background-size: 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
+.admin-card-controls .admin-card-select .multi-select-toggle {
   font-size: 12px;
-  padding: 4px 24px 4px 8px;
-  cursor: pointer;
-  transition: var(--transition);
-  outline: none;
-  appearance: none;
-  -webkit-appearance: none;
-  -moz-appearance: none;
+  padding: 0 24px 0 8px;
 }
-
-.admin-card-select:hover {
-  border-color: var(--border-hover);
-  background-color: var(--bg-4);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23f0f0f5' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
-}
-
-.admin-card-select:focus {
-  border-color: var(--accent);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236366f1' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+/* .admin-card обрезает overflow ради круглых углов миниатюры. Панель
+   MultiSelect абсолютно позиционирована и без разрешения "утекать" она
+   клипается снизу. Когда селект открыт — разрешаем overflow и поднимаем
+   карточку над соседями, чтобы панель не уходила под следующую. */
+.admin-card:has(.multi-select.open) {
+  overflow: visible;
+  z-index: 20;
 }
 
 /* === SUBCATEGORY TAGS === */

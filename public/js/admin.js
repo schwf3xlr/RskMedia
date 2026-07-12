@@ -1,5 +1,36 @@
-import { auth, api, toast, categories, events } from './main.js';
+import { auth, api, toast, categories, events, MultiSelect } from './main.js';
 import { AGE_RATINGS } from './constants.js';
+
+// Реестр всех кастомных селектов в админке. Заводим один раз при загрузке
+// страницы (после DOMContentLoaded); все дальнейшие обращения читают/пишут
+// значения через MultiSelect API. Ключ — id контейнера, значение — инстанс.
+const adminSelects = {};
+
+function initAdminSelect(id, options = null) {
+  const el = document.getElementById(id);
+  if (!el) return null;
+  const ms = new MultiSelect(el);
+  if (options) ms.setOptions(options);
+  adminSelects[id] = ms;
+  return ms;
+}
+
+function readSelect(id) {
+  return adminSelects[id]?.getSingle() ?? '';
+}
+
+function writeSelect(id, value) {
+  adminSelects[id]?.setValue(value === undefined || value === null ? '' : value);
+}
+
+// AGE_RATINGS с "Не указан" в начале — использованы во всех age-селектах
+// админки (single/batch/zip upload, batch edit).
+function ageOptions(emptyLabel = 'Не указан') {
+  return [
+    { id: '', name: emptyLabel },
+    ...AGE_RATINGS.map(a => ({ id: a, name: a >= 19 ? `${a}+` : String(a) })),
+  ];
+}
 
 // Server-side middleware already ensures admin access for /admin route.
 // If this script somehow runs without admin rights, backend calls will fail with 403.
@@ -86,43 +117,75 @@ document.querySelectorAll('.admin-missing-filter').forEach(cb => {
   });
 });
 
+// Специи подписей для каждого селекта — используются и в data-empty у
+// контейнера в admin.ejs, и здесь при smallcaps-подстановке "первого"
+// пункта в setOptions.
+const CATEGORY_EMPTY = {
+  singleCategory: 'Категория',
+  batchCategory: 'Категория',
+  zipCategory: 'Категория',
+  batchSetCategory: 'Установить категорию',
+  newSubcategoryCategory: 'Выберите категорию',
+};
+const SUBCATEGORY_EMPTY = {
+  singleSubcategory: 'Подкатегория',
+  batchSubcategory: 'Подкатегория',
+  zipSubcategory: 'Подкатегория',
+  batchSetSubcategory: 'Установить подкатегорию',
+};
+const AGE_EMPTY = {
+  singleAge: 'Возраст',
+  batchAge: 'Возраст',
+  zipAge: 'Возраст',
+  batchSetAge: 'Установить возраст',
+};
+
+// Инициализируем ВСЕ MultiSelect админки одним махом — на момент загрузки
+// admin.ejs все контейнеры уже в DOM. Опции категорий подтянутся
+// асинхронно ниже, подкатегорий — по мере смены категории.
+Object.keys(CATEGORY_EMPTY).forEach(id => initAdminSelect(id));
+Object.keys(SUBCATEGORY_EMPTY).forEach(id => initAdminSelect(id));
+Object.keys(AGE_EMPTY).forEach(id => initAdminSelect(id, ageOptions(AGE_EMPTY[id])));
+
 async function loadAdminCategories() {
   const cats = await categories.loadAll();
   state.allAdminCategories = cats;
-  const selects = ['singleCategory', 'batchCategory', 'batchSetCategory', 'newSubcategoryCategory'];
-  selects.forEach(id => {
-    const select = document.getElementById(id);
-    if (select) {
-      const emptyLabel = id === 'batchSetCategory' ? 'Установить категорию' : id === 'newSubcategoryCategory' ? 'Выберите категорию' : 'Без категории';
-      categories.populateSelect(select, cats, emptyLabel);
-    }
+  const catOptions = cats.map(c => ({ id: c.id, name: c.name }));
+  Object.keys(CATEGORY_EMPTY).forEach(id => {
+    const ms = adminSelects[id];
+    if (!ms) return;
+    ms.setOptions([{ id: '', name: CATEGORY_EMPTY[id] }, ...catOptions]);
   });
 }
 
-const batchSetCategory = document.getElementById('batchSetCategory');
-if (batchSetCategory) {
-  batchSetCategory.addEventListener('change', async () => {
-    const subSelect = document.getElementById('batchSetSubcategory');
-    if (subSelect) {
-      const subs = await categories.loadSubcategories(batchSetCategory.value);
-      categories.populateSelect(subSelect, subs, 'Установить подкатегорию');
+// Смена категории → перезагрузка подкатегорий. Слушаем кастомный `change`
+// (dispatch'ится MultiSelect в single/multi режиме).
+async function wireCategorySubcategoryLink(catId, subId) {
+  const catEl = document.getElementById(catId);
+  if (!catEl) return;
+  catEl.addEventListener('change', async () => {
+    const catMs = adminSelects[catId];
+    const subMs = adminSelects[subId];
+    if (!catMs || !subMs) return;
+    const empty = SUBCATEGORY_EMPTY[subId] || 'Подкатегория';
+    const chosen = catMs.getSingle();
+    if (!chosen) {
+      subMs.setOptions([{ id: '', name: empty }]);
+      subMs.setValue('');
+      return;
+    }
+    try {
+      const subs = await categories.loadSubcategories(chosen);
+      subMs.setOptions([{ id: '', name: empty }, ...subs.map(s => ({ id: s.id, name: s.name }))]);
+    } catch (err) {
+      console.error('Subcategory load error:', err);
     }
   });
 }
-
-['singleCategory', 'batchCategory'].forEach(id => {
-  const select = document.getElementById(id);
-  if (select) {
-    select.addEventListener('change', async () => {
-      const subId = id.replace('Category', 'Subcategory');
-      const subSelect = document.getElementById(subId);
-      if (subSelect) {
-        const subs = await categories.loadSubcategories(select.value);
-        categories.populateSelect(subSelect, subs, 'Без подкатегории');
-      }
-    });
-  }
-});
+wireCategorySubcategoryLink('singleCategory', 'singleSubcategory');
+wireCategorySubcategoryLink('batchCategory', 'batchSubcategory');
+wireCategorySubcategoryLink('zipCategory', 'zipSubcategory');
+wireCategorySubcategoryLink('batchSetCategory', 'batchSetSubcategory');
 
 loadAdminCategories();
 
@@ -180,9 +243,9 @@ document.getElementById('singleUploadForm')?.addEventListener('submit', async (e
 
   const formData = new FormData();
   formData.append('file', file);
-  formData.append('category_id', document.getElementById('singleCategory').value);
-  formData.append('subcategory_id', document.getElementById('singleSubcategory').value);
-  formData.append('age_rating', document.getElementById('singleAge').value);
+  formData.append('category_id', readSelect('singleCategory'));
+  formData.append('subcategory_id', readSelect('singleSubcategory'));
+  formData.append('age_rating', readSelect('singleAge'));
 
   const progressBar = document.getElementById('singleProgress');
   const progressFill = document.getElementById('singleProgressFill');
@@ -200,6 +263,10 @@ document.getElementById('singleUploadForm')?.addEventListener('submit', async (e
     progressFill.style.width = '100%';
     toast.show('Файл загружен');
     e.target.reset();
+    // <form>.reset() не трогает наши кастомные MultiSelect — очищаем явно.
+    writeSelect('singleCategory', '');
+    writeSelect('singleSubcategory', '');
+    writeSelect('singleAge', '');
     resetSingleDropZone();
   } catch (err) {
     toast.show(err.message, 'error');
@@ -299,9 +366,9 @@ document.getElementById('batchUploadForm')?.addEventListener('submit', async (e)
     };
   }
 
-  const categoryId = document.getElementById('batchCategory').value;
-  const subcategoryId = document.getElementById('batchSubcategory').value;
-  const ageRating = document.getElementById('batchAge').value;
+  const categoryId = readSelect('batchCategory');
+  const subcategoryId = readSelect('batchSubcategory');
+  const ageRating = readSelect('batchAge');
 
   const fileArray = Array.from(files);
   const queueItems = fileArray.map(file => {
@@ -467,15 +534,18 @@ document.getElementById('zipUploadForm')?.addEventListener('submit', async (e) =
 
   const formData = new FormData();
   formData.append('archive', file);
-  formData.append('category_id', document.getElementById('zipCategory').value);
-  formData.append('subcategory_id', document.getElementById('zipSubcategory').value);
-  formData.append('age_rating', document.getElementById('zipAge').value);
+  formData.append('category_id', readSelect('zipCategory'));
+  formData.append('subcategory_id', readSelect('zipSubcategory'));
+  formData.append('age_rating', readSelect('zipAge'));
 
   try {
     const result = await api.upload('/api/admin/upload-zip', formData, {});
     toast.show(`Загружено ${result.uploaded} из архива (${result.errors} ошибок)`,
       result.errors > 0 ? 'warning' : 'success');
     e.target.reset();
+    writeSelect('zipCategory', '');
+    writeSelect('zipSubcategory', '');
+    writeSelect('zipAge', '');
   } catch (err) {
     toast.show(err.message, 'error');
   } finally {
@@ -614,46 +684,64 @@ function createAdminCard(item, index = 0) {
   checkbox.addEventListener('change', updateSelectedCount);
   card.appendChild(checkbox);
 
-  const catSelect = document.createElement('select');
-  catSelect.className = 'admin-card-select';
-  catSelect.dataset.field = 'category';
-  catSelect.innerHTML = '<option value="">Категория</option>' +
-    state.allAdminCategories.map(c => `<option value="${c.id}" ${c.id === item.category_id ? 'selected' : ''}>${c.name}</option>`).join('');
-  catSelect.addEventListener('change', async () => {
-    const subSelect = card.querySelector('[data-field="subcategory"]');
-    if (subSelect) {
-      const subs = await categories.loadSubcategories(catSelect.value);
-      subSelect.innerHTML = '<option value="">Подкатегория</option>' +
-        subs.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
-    }
-    await saveSingleChange(item.id, { category_id: catSelect.value || null });
-  });
-  controls.appendChild(catSelect);
+  // Inline редактор карточки — три кастомных MultiSelect single-mode.
+  // Контейнер должен существовать в DOM ДО инстанциирования, поэтому сначала
+  // append, потом new MultiSelect(...).
+  const catContainer = document.createElement('div');
+  catContainer.className = 'multi-select admin-card-select';
+  catContainer.dataset.mode = 'single';
+  catContainer.dataset.empty = 'Категория';
+  catContainer.dataset.field = 'category';
+  controls.appendChild(catContainer);
+  const catMs = new MultiSelect(catContainer);
+  catMs.setOptions([{ id: '', name: 'Категория' }, ...state.allAdminCategories.map(c => ({ id: c.id, name: c.name }))]);
+  catMs.setValue(item.category_id ? String(item.category_id) : '');
 
-  const subSelect = document.createElement('select');
-  subSelect.className = 'admin-card-select';
-  subSelect.dataset.field = 'subcategory';
-  subSelect.innerHTML = '<option value="">Подкатегория</option>';
-  subSelect.addEventListener('change', async () => {
-    await saveSingleChange(item.id, { subcategory_id: subSelect.value || null });
+  const subContainer = document.createElement('div');
+  subContainer.className = 'multi-select admin-card-select';
+  subContainer.dataset.mode = 'single';
+  subContainer.dataset.empty = 'Подкатегория';
+  subContainer.dataset.field = 'subcategory';
+  controls.appendChild(subContainer);
+  const subMs = new MultiSelect(subContainer);
+  subMs.setOptions([{ id: '', name: 'Подкатегория' }]);
+
+  catContainer.addEventListener('change', async () => {
+    const catVal = catMs.getSingle();
+    if (catVal) {
+      const subs = await categories.loadSubcategories(catVal);
+      subMs.setOptions([{ id: '', name: 'Подкатегория' }, ...subs.map(s => ({ id: s.id, name: s.name }))]);
+    } else {
+      subMs.setOptions([{ id: '', name: 'Подкатегория' }]);
+      subMs.setValue('');
+    }
+    await saveSingleChange(item.id, { category_id: catVal ? Number(catVal) : null });
   });
-  controls.appendChild(subSelect);
+
+  subContainer.addEventListener('change', async () => {
+    const subVal = subMs.getSingle();
+    await saveSingleChange(item.id, { subcategory_id: subVal ? Number(subVal) : null });
+  });
 
   if (item.category_id) {
     categories.loadSubcategories(item.category_id).then(subs => {
-      subSelect.innerHTML = '<option value="">Подкатегория</option>' +
-        subs.map(s => `<option value="${s.id}" ${s.id === item.subcategory_id ? 'selected' : ''}>${s.name}</option>`).join('');
+      subMs.setOptions([{ id: '', name: 'Подкатегория' }, ...subs.map(s => ({ id: s.id, name: s.name }))]);
+      subMs.setValue(item.subcategory_id ? String(item.subcategory_id) : '');
     });
   }
 
-  const ageSelect = document.createElement('select');
-  ageSelect.className = 'admin-card-select';
-  ageSelect.innerHTML = '<option value="">Возраст</option>' +
-    AGE_RATINGS.map(a => `<option value="${a}" ${item.age_rating === a ? 'selected' : ''}>${a >= 19 ? a + '+' : a}</option>`).join('');
-  ageSelect.addEventListener('change', async () => {
-    await saveSingleChange(item.id, { age_rating: ageSelect.value || null });
+  const ageContainer = document.createElement('div');
+  ageContainer.className = 'multi-select admin-card-select';
+  ageContainer.dataset.mode = 'single';
+  ageContainer.dataset.empty = 'Возраст';
+  controls.appendChild(ageContainer);
+  const ageMs = new MultiSelect(ageContainer);
+  ageMs.setOptions(ageOptions('Возраст'));
+  ageMs.setValue(item.age_rating !== null && item.age_rating !== undefined ? String(item.age_rating) : '');
+  ageContainer.addEventListener('change', async () => {
+    const ageVal = ageMs.getSingle();
+    await saveSingleChange(item.id, { age_rating: ageVal ? parseInt(ageVal, 10) : null });
   });
-  controls.appendChild(ageSelect);
 
   const delBtn = document.createElement('button');
   delBtn.className = 'btn btn-danger btn-sm';
@@ -729,9 +817,9 @@ document.getElementById('applyBatch')?.addEventListener('click', async () => {
     return;
   }
 
-  const categoryId = document.getElementById('batchSetCategory').value;
-  const subcategoryId = document.getElementById('batchSetSubcategory').value;
-  const ageRating = document.getElementById('batchSetAge').value;
+  const categoryId = readSelect('batchSetCategory');
+  const subcategoryId = readSelect('batchSetSubcategory');
+  const ageRating = readSelect('batchSetAge');
 
   const updates = { ids };
   if (categoryId) updates.category_id = categoryId;
@@ -746,6 +834,9 @@ document.getElementById('applyBatch')?.addEventListener('click', async () => {
   try {
     await api.put('/api/media/batch-update', updates);
     toast.show('Изменения применены');
+    writeSelect('batchSetCategory', '');
+    writeSelect('batchSetSubcategory', '');
+    writeSelect('batchSetAge', '');
     resetBatchGrid();
     loadMediaCards(1, false);
   } catch (err) {
@@ -880,9 +971,8 @@ document.getElementById('createCategoryBtn')?.addEventListener('click', async ()
 });
 
 document.getElementById('createSubcategoryBtn')?.addEventListener('click', async () => {
-  const categorySelect = document.getElementById('newSubcategoryCategory');
   const input = document.getElementById('newSubcategoryName');
-  const categoryId = categorySelect.value;
+  const categoryId = readSelect('newSubcategoryCategory');
   const name = input.value.trim();
   if (!categoryId || !name) {
     toast.show('Выберите категорию и введите название', 'error');
@@ -893,6 +983,7 @@ document.getElementById('createSubcategoryBtn')?.addEventListener('click', async
     categories.invalidateSubcategories(categoryId);
     toast.show('Подкатегория создана');
     input.value = '';
+    writeSelect('newSubcategoryCategory', '');
     loadCategoriesPanel();
   } catch (err) {
     toast.show(err.message, 'error');

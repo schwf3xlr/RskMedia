@@ -436,7 +436,195 @@ const favorites = {
   },
 };
 
-export { auth, api, toast, categories, favorites, events };
+// Custom dropdown в стиль сайта. Заменяет нативный <select> (и особенно
+// плох на мобильных, где системный picker закрывает пол-формы). Живёт в
+// main.js, потому что и player.js (галерея), и admin.js (формы загрузки и
+// редактирование карточек) им пользуются.
+//
+// Contract: attach к <div class="multi-select" id="…" data-empty="…"
+// data-label="…" [data-mode="single"]></div>. Контейнер полностью
+// перекраивается конструктором. setOptions([{ id, name }]),
+// setValue(idsOrId), getValue() → string[], getSingle() → string.
+// В multi-mode чекбоксы, панель остаётся открытой; в single-mode — радио,
+// закрывается сразу после клика.
+class MultiSelect {
+  static _openInstance = null;
+  static _globalListenerAttached = false;
+  static _attachGlobalListener() {
+    if (MultiSelect._globalListenerAttached) return;
+    MultiSelect._globalListenerAttached = true;
+    document.addEventListener('click', (e) => {
+      const open = MultiSelect._openInstance;
+      if (open && !open.container.contains(e.target)) open.close();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && MultiSelect._openInstance) {
+        MultiSelect._openInstance.close();
+      }
+    });
+  }
+
+  constructor(container) {
+    this.container = container;
+    this.emptyLabel = container.dataset.empty || 'Все';
+    this.groupLabel = container.dataset.label || 'элементы';
+    this.mode = container.dataset.mode === 'single' ? 'single' : 'multi';
+    this.options = [];
+    this.selected = new Set();
+    this._build();
+    MultiSelect._attachGlobalListener();
+  }
+
+  _build() {
+    this.container.innerHTML = '';
+    this.toggle = document.createElement('button');
+    this.toggle.type = 'button';
+    this.toggle.className = 'multi-select-toggle';
+    this.toggle.setAttribute('aria-haspopup', 'listbox');
+    this.toggle.setAttribute('aria-expanded', 'false');
+    this.toggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.container.classList.contains('open') ? this.close() : this.open();
+    });
+    this.container.appendChild(this.toggle);
+
+    this.panel = document.createElement('div');
+    this.panel.className = 'multi-select-panel';
+    this.panel.setAttribute('role', 'listbox');
+    if (this.mode === 'multi') this.panel.setAttribute('aria-multiselectable', 'true');
+    this.container.appendChild(this.panel);
+    this._updateLabel();
+  }
+
+  setOptions(options) {
+    this.options = options.map(o => ({ id: String(o.id), name: String(o.name) }));
+    this.panel.innerHTML = '';
+    for (const opt of this.options) {
+      if (this.mode === 'multi') this.panel.appendChild(this._buildMultiOption(opt));
+      else this.panel.appendChild(this._buildSingleOption(opt));
+    }
+    for (const id of Array.from(this.selected)) {
+      if (!this.options.find(o => o.id === id)) this.selected.delete(id);
+    }
+    this._updateLabel();
+  }
+
+  _buildMultiOption(opt) {
+    const label = document.createElement('label');
+    label.className = 'multi-select-option';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = opt.id;
+    cb.checked = this.selected.has(opt.id);
+    if (cb.checked) label.classList.add('checked');
+    cb.addEventListener('change', () => {
+      if (cb.checked) this.selected.add(opt.id);
+      else this.selected.delete(opt.id);
+      label.classList.toggle('checked', cb.checked);
+      this._updateLabel();
+      this.container.dispatchEvent(new CustomEvent('change', { detail: this.getValue() }));
+    });
+    const text = document.createElement('span');
+    text.textContent = opt.name;
+    label.append(cb, text);
+    return label;
+  }
+
+  _buildSingleOption(opt) {
+    const row = document.createElement('div');
+    row.className = 'multi-select-option single';
+    row.setAttribute('role', 'option');
+    row.tabIndex = 0;
+    if (this.selected.has(opt.id)) {
+      row.classList.add('checked');
+      row.setAttribute('aria-selected', 'true');
+    }
+    const check = document.createElement('span');
+    check.className = 'multi-select-check';
+    check.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" ' +
+      'stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">' +
+      '<polyline points="20 6 9 17 4 12"/></svg>';
+    const text = document.createElement('span');
+    text.textContent = opt.name;
+    row.append(check, text);
+    const pick = () => {
+      this.selected = new Set([opt.id]);
+      this.panel.querySelectorAll('.multi-select-option').forEach(el => {
+        const isThis = el === row;
+        el.classList.toggle('checked', isThis);
+        if (isThis) el.setAttribute('aria-selected', 'true');
+        else el.removeAttribute('aria-selected');
+      });
+      this._updateLabel();
+      this.container.dispatchEvent(new CustomEvent('change', { detail: this.getValue() }));
+      this.close();
+    };
+    row.addEventListener('click', pick);
+    row.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); }
+    });
+    return row;
+  }
+
+  setValue(ids) {
+    const list = Array.isArray(ids) ? ids : (ids !== undefined && ids !== null && ids !== '' ? [ids] : []);
+    this.selected = new Set(list.map(String));
+    if (this.mode === 'multi') {
+      this.panel.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        cb.checked = this.selected.has(cb.value);
+        cb.parentElement.classList.toggle('checked', cb.checked);
+      });
+    } else {
+      this.panel.querySelectorAll('.multi-select-option').forEach((row, i) => {
+        const opt = this.options[i];
+        if (!opt) return;
+        const isSel = this.selected.has(opt.id);
+        row.classList.toggle('checked', isSel);
+        if (isSel) row.setAttribute('aria-selected', 'true');
+        else row.removeAttribute('aria-selected');
+      });
+    }
+    this._updateLabel();
+  }
+
+  getValue() { return Array.from(this.selected); }
+  getSingle() { return Array.from(this.selected)[0] || ''; }
+  clear() { this.setValue([]); }
+
+  _updateLabel() {
+    const n = this.selected.size;
+    if (n === 0) {
+      this.toggle.textContent = this.emptyLabel;
+      this.toggle.dataset.empty = 'true';
+    } else if (n === 1) {
+      const id = Array.from(this.selected)[0];
+      const opt = this.options.find(o => o.id === id);
+      this.toggle.textContent = opt ? opt.name : `1 ${this.groupLabel}`;
+      this.toggle.dataset.empty = 'false';
+    } else {
+      this.toggle.textContent = `${this.groupLabel}: ${n}`;
+      this.toggle.dataset.empty = 'false';
+    }
+  }
+
+  open() {
+    if (MultiSelect._openInstance && MultiSelect._openInstance !== this) {
+      MultiSelect._openInstance.close();
+    }
+    this.container.classList.add('open');
+    this.toggle.setAttribute('aria-expanded', 'true');
+    MultiSelect._openInstance = this;
+  }
+
+  close() {
+    this.container.classList.remove('open');
+    this.toggle.setAttribute('aria-expanded', 'false');
+    if (MultiSelect._openInstance === this) MultiSelect._openInstance = null;
+  }
+}
+
+export { auth, api, toast, categories, favorites, events, MultiSelect };
 
 const logoutBtn = document.getElementById('logoutBtn');
 if (logoutBtn) {
