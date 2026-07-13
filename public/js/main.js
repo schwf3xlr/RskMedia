@@ -684,10 +684,17 @@ class MultiSelect {
     // Позиционируем только после того, как панель стала flex-визимой
     // (иначе offsetHeight = 0). Используем rAF, чтобы CSS применился.
     requestAnimationFrame(() => this._positionPanel());
-    // Скролл страницы / изменение размера окна → закрываем панель. Это
-    // повторяет поведение native <select>. `passive: true` — панель
-    // только слушает, ничего не preventDefault'ит.
-    this._onScroll = () => this.close();
+    // Скролл СТРАНИЦЫ (не самой панели) / изменение размера окна →
+    // закрываем панель. Это повторяет поведение native <select>.
+    // capture: true нужен потому, что для scrollable div'ов scroll НЕ
+    // всплывает — ловим на пути вниз. Но одновременно это ловит и скролл
+    // ВНУТРИ .multi-select-scroll — проверяем e.target и игнорируем
+    // события, чей target — сама панель или её потомок; иначе панель
+    // закрывалась в момент касания скроллбара.
+    this._onScroll = (e) => {
+      if (this.panel.contains(e.target) || e.target === this.panel) return;
+      this.close();
+    };
     this._onResize = () => this.close();
     window.addEventListener('scroll', this._onScroll, { capture: true, passive: true });
     window.addEventListener('resize', this._onResize, { passive: true });
