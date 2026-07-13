@@ -455,7 +455,14 @@ class MultiSelect {
     MultiSelect._globalListenerAttached = true;
     document.addEventListener('click', (e) => {
       const open = MultiSelect._openInstance;
-      if (open && !open.container.contains(e.target)) open.close();
+      // Панель монтируется в <body>, а не внутрь container — поэтому
+      // клик по опции проверяем ОТДЕЛЬНО через panel.contains(). Без
+      // этого клик по чекбоксу в multi-mode считался бы "снаружи" и
+      // закрывал панель после первого выбора.
+      if (!open) return;
+      if (open.container.contains(e.target)) return;
+      if (open.panel.contains(e.target)) return;
+      open.close();
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && MultiSelect._openInstance) {
@@ -492,16 +499,34 @@ class MultiSelect {
     this.panel.className = 'multi-select-panel';
     this.panel.setAttribute('role', 'listbox');
     if (this.mode === 'multi') this.panel.setAttribute('aria-multiselectable', 'true');
-    this.container.appendChild(this.panel);
+    // Панель монтируется в <body>, а не в container, потому что
+    // position: fixed НЕ спасает от stacking context'а предка с
+    // transform/opacity/filter (а такие в проекте есть — модалки,
+    // карточки с анимацией). Только полный вынос в body гарантирует, что
+    // никакой ancestor не участвует в раскладке панели.
+    document.body.appendChild(this.panel);
+    // Внутрь панели — скролл-контейнер. Скроллбар живёт в нём, поэтому
+    // не касается округлых углов внешнего блока.
+    this.scroll = document.createElement('div');
+    this.scroll.className = 'multi-select-scroll';
+    this.panel.appendChild(this.scroll);
     this._updateLabel();
   }
 
   setOptions(options) {
     this.options = options.map(o => ({ id: String(o.id), name: String(o.name) }));
-    this.panel.innerHTML = '';
-    for (const opt of this.options) {
-      if (this.mode === 'multi') this.panel.appendChild(this._buildMultiOption(opt));
-      else this.panel.appendChild(this._buildSingleOption(opt));
+    this.scroll.innerHTML = '';
+    if (this.options.length === 0) {
+      // Пустая узкая панель — плохой UX. Показываем empty state.
+      const empty = document.createElement('div');
+      empty.className = 'multi-select-empty';
+      empty.textContent = 'Нет доступных вариантов';
+      this.scroll.appendChild(empty);
+    } else {
+      for (const opt of this.options) {
+        if (this.mode === 'multi') this.scroll.appendChild(this._buildMultiOption(opt));
+        else this.scroll.appendChild(this._buildSingleOption(opt));
+      }
     }
     for (const id of Array.from(this.selected)) {
       if (!this.options.find(o => o.id === id)) this.selected.delete(id);
@@ -550,7 +575,7 @@ class MultiSelect {
     row.append(check, text);
     const pick = () => {
       this.selected = new Set([opt.id]);
-      this.panel.querySelectorAll('.multi-select-option').forEach(el => {
+      this.scroll.querySelectorAll('.multi-select-option').forEach(el => {
         const isThis = el === row;
         el.classList.toggle('checked', isThis);
         if (isThis) el.setAttribute('aria-selected', 'true');
@@ -571,12 +596,12 @@ class MultiSelect {
     const list = Array.isArray(ids) ? ids : (ids !== undefined && ids !== null && ids !== '' ? [ids] : []);
     this.selected = new Set(list.map(String));
     if (this.mode === 'multi') {
-      this.panel.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      this.scroll.querySelectorAll('input[type="checkbox"]').forEach(cb => {
         cb.checked = this.selected.has(cb.value);
         cb.parentElement.classList.toggle('checked', cb.checked);
       });
     } else {
-      this.panel.querySelectorAll('.multi-select-option').forEach((row, i) => {
+      this.scroll.querySelectorAll('.multi-select-option').forEach((row, i) => {
         const opt = this.options[i];
         if (!opt) return;
         const isSel = this.selected.has(opt.id);
@@ -608,6 +633,43 @@ class MultiSelect {
     }
   }
 
+  // Рассчитать координаты панели относительно тогглера. Панель fixed →
+  // top/left в viewport координатах. Если снизу мало места и сверху
+  // больше — открываем вверх (позиционируем над тогглером).
+  _positionPanel() {
+    const rect = this.toggle.getBoundingClientRect();
+    const GAP = 6;
+    const MARGIN = 8;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    // Сначала рендерим панель с дефолтной шириной, чтобы измерить её
+    // реальный размер, потом уже двигаем куда надо.
+    this.panel.style.minWidth = `${rect.width}px`;
+    // Максимум по высоте — сколько влезет в viewport (с запасом MARGIN);
+    // CSS max-height: 320px возьмёт минимум из двух.
+    const availBelow = vh - rect.bottom - GAP - MARGIN;
+    const availAbove = rect.top - GAP - MARGIN;
+    const openUp = availBelow < 160 && availAbove > availBelow;
+    const maxH = Math.max(120, openUp ? availAbove : availBelow);
+    this.panel.style.maxHeight = `${Math.min(320, maxH)}px`;
+
+    // Ширина: минимум = ширина тогглера, максимум задан в CSS.
+    const panelW = this.panel.offsetWidth;
+    // Прижимаем к левому краю тогглера. Если выступает за viewport —
+    // сдвигаем влево ровно на выступ.
+    let left = rect.left;
+    if (left + panelW + MARGIN > vw) left = vw - panelW - MARGIN;
+    if (left < MARGIN) left = MARGIN;
+
+    this.panel.style.left = `${left}px`;
+    if (openUp) {
+      this.panel.style.top = `${rect.top - GAP - this.panel.offsetHeight}px`;
+    } else {
+      this.panel.style.top = `${rect.bottom + GAP}px`;
+    }
+  }
+
   open() {
     if (MultiSelect._openInstance && MultiSelect._openInstance !== this) {
       MultiSelect._openInstance.close();
@@ -615,11 +677,29 @@ class MultiSelect {
     this.container.classList.add('open');
     this.toggle.setAttribute('aria-expanded', 'true');
     MultiSelect._openInstance = this;
+    // Позиционируем только после того, как панель стала flex-визимой
+    // (иначе offsetHeight = 0). Используем rAF, чтобы CSS применился.
+    requestAnimationFrame(() => this._positionPanel());
+    // Скролл страницы / изменение размера окна → закрываем панель. Это
+    // повторяет поведение native <select>. `passive: true` — панель
+    // только слушает, ничего не preventDefault'ит.
+    this._onScroll = () => this.close();
+    this._onResize = () => this.close();
+    window.addEventListener('scroll', this._onScroll, { capture: true, passive: true });
+    window.addEventListener('resize', this._onResize, { passive: true });
   }
 
   close() {
     this.container.classList.remove('open');
     this.toggle.setAttribute('aria-expanded', 'false');
+    if (this._onScroll) {
+      window.removeEventListener('scroll', this._onScroll, { capture: true });
+      this._onScroll = null;
+    }
+    if (this._onResize) {
+      window.removeEventListener('resize', this._onResize);
+      this._onResize = null;
+    }
     if (MultiSelect._openInstance === this) MultiSelect._openInstance = null;
   }
 }

@@ -1394,14 +1394,9 @@ body.modal-open .shortcut-help-btn {
   font-size: 12px;
   padding: 0 24px 0 8px;
 }
-/* .admin-card обрезает overflow ради круглых углов миниатюры. Панель
-   MultiSelect абсолютно позиционирована и без разрешения "утекать" она
-   клипается снизу. Когда селект открыт — разрешаем overflow и поднимаем
-   карточку над соседями, чтобы панель не уходила под следующую. */
-.admin-card:has(.multi-select.open) {
-  overflow: visible;
-  z-index: 20;
-}
+/* Панель MultiSelect теперь position: fixed, координаты выставляются
+   через JS относительно viewport'а — overflow: hidden на .admin-card
+   больше не режет её. Хак с :has() + z-index бумр не нужен. */
 
 /* === SUBCATEGORY TAGS === */
 .subcategory-list {

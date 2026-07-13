@@ -308,23 +308,12 @@
    подкатегории / возраст). Стили калькированы под .filter-select чтобы
    не выделяться в filters-row. */
 
-/* .filters должен перебивать stacking context карточек ниже. .media-card
-   использует transform (анимация cardIn + hover), из-за чего каждая
-   карточка создаёт собственный stacking context, и попап-панель без
-   явного z-index на .filters уходит под сетку. */
-.filters {
-  position: relative;
-  z-index: 10;
-}
+/* Панели теперь position: fixed — z-index на .filters и .multi-select
+   больше не нужен. Оставлено пусто для читаемости истории. */
 .multi-select {
   position: relative;
   min-width: 180px;
   height: var(--control-height);
-}
-/* Открытый multi-select поднимаем над братьями-фильтрами, чтобы его
-   панель гарантированно закрывала соседние тогглеры. */
-.multi-select.open {
-  z-index: 11;
 }
 .multi-select-toggle {
   width: 100%;
@@ -363,26 +352,70 @@
   /* Скрыто по умолчанию. HTML-атрибут `hidden` не работает, потому что
      ниже стоит display: flex — у класса выше специфичность, чем у
      UA-правила [hidden] { display: none }. Открытие/закрытие делаем
-     через .multi-select.open в JS. */
+     через .multi-select.open в JS.
+
+     position: fixed вместо absolute — раньше absolute-панель клипалась
+     .edit-panel-body { overflow-y: auto } и уходила под соседние
+     .upload-card в админке (без position: relative на них
+     absolute-child позиционировался относительно viewport'а, но overflow
+     родителя всё равно её резал). fixed рендерится относительно viewport
+     напрямую, никакой ancestor не обрежет и не сложит z-index. Координаты
+     рассчитывает MultiSelect.open() из getBoundingClientRect() тогглера.
+     При скролле панель закрывается — это стандартное поведение native
+     <select>. */
   display: none;
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  z-index: 100;
-  min-width: 100%;
-  max-width: 280px;
+  position: fixed;
+  z-index: 10000;
+  min-width: 180px;
+  max-width: 320px;
   max-height: 320px;
-  overflow-y: auto;
-  padding: 6px;
+  /* Внутрь ляжет .multi-select-scroll со своим overflow-y. Внешний блок
+     не скроллится — так scrollbar не касается скруглённых углов. */
+  overflow: hidden;
   background: var(--bg-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
   flex-direction: column;
-  gap: 2px;
 }
 .multi-select.open .multi-select-panel {
   display: flex;
+}
+/* Внутренний скролл-контейнер. Отступ 6px по всем сторонам оставляет
+   зазор между строками и скруглёнными углами внешнего блока, а
+   webkit-scrollbar получает свои собственные округлые "рельсы". */
+.multi-select-scroll {
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Firefox: тонкий скроллбар, никакого фона под ним. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-hover) transparent;
+}
+.multi-select-scroll::-webkit-scrollbar { width: 8px; }
+.multi-select-scroll::-webkit-scrollbar-track {
+  background: transparent;
+  /* Отступ сверху/снизу, чтобы бегунок в крайних положениях НЕ доходил
+     до скруглённых углов внешней панели. */
+  margin: 6px 0;
+}
+.multi-select-scroll::-webkit-scrollbar-thumb {
+  background: var(--border-hover);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.multi-select-scroll::-webkit-scrollbar-thumb:hover { background: var(--accent); background-clip: padding-box; border: 2px solid transparent; }
+/* Empty state: когда в setOptions() пришёл пустой список — вместо
+   ужасной узкой полоски показываем пояснение. */
+.multi-select-empty {
+  padding: 16px 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-align: center;
+  font-style: italic;
 }
 .multi-select-option {
   display: flex;
@@ -448,9 +481,10 @@
     min-width: 0;
   }
   .multi-select-panel {
-    left: auto;
-    right: 0;
-    max-width: calc(100vw - 32px);
+    /* Панель fixed — координаты выставляет JS. Здесь только уточняем
+       максимальную ширину для узких экранов, чтобы содержимое не
+       вылезало за края viewport'а. */
+    max-width: calc(100vw - 24px);
   }
 }
 
