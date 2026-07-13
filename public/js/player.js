@@ -521,7 +521,26 @@ const gallery = {
     } catch (err) {
       if (err.name !== 'AbortError') {
         console.error('Load error:', err);
-        toast.show('Ошибка загрузки', 'error');
+        // КРИТИЧНО: при ошибке снимаем hasMore, иначе _maybeLoadMoreIfSentinelVisible
+        // в finally перезапустит loadMore → 404/500 в цикле, добьём rate limiter
+        // до 429. Обратный вариант "retry без ограничений" плохо чувствуется
+        // и на UX, и на бэкенде — лучше явная ошибка + Refresh.
+        this.hasMore = false;
+        // Особый случай для режима коллекции: 404 на первой странице →
+        // коллекция удалена / чужая. Показываем понятный empty вместо
+        // generic toast.
+        if (this.collectionId && this.page === 1 && this.media.length === 0) {
+          this.clearInitialSkeletons();
+          if (emptyState) {
+            emptyState.classList.remove('hidden');
+            const title = document.getElementById('emptyTitle');
+            const text = document.getElementById('emptyText');
+            if (title) title.textContent = 'Коллекция не найдена';
+            if (text) text.textContent = 'Возможно, она была удалена или ссылка неверна';
+          }
+        } else {
+          toast.show('Ошибка загрузки', 'error');
+        }
       }
     } finally {
       this.loading = false;
