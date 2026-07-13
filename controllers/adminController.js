@@ -9,7 +9,12 @@ const { enrichMany } = require('../helpers/enrichUrls');
 const { invalidateAuthCache } = require('../middleware/auth');
 const db = require('../config/database');
 
-const BACKUP_TABLES = ['categories', 'subcategories', 'tokens', 'media', 'favorites'];
+// Порядок здесь = порядок бэкапа (не INSERT-порядок при restore — тот
+// отдельно ниже). collections и collection_items добавлены вместе с
+// фичей плейлистов; отсутствие их в старом файле бэкапа не сломает
+// restore, потому что unknown-таблицы в старом файле — это отсутствие
+// в data[table], который проверяется как Array.
+const BACKUP_TABLES = ['categories', 'subcategories', 'tokens', 'media', 'favorites', 'collections', 'collection_items'];
 const BACKUP_SENSITIVE_COLUMNS = {
   tokens: ['jwt_hash'],
 };
@@ -143,10 +148,16 @@ const AdminController = {
         tableColumns[table] = colResult.rows.map(r => r.column_name);
       }
 
-      // Validate top-level structure
+      // Validate top-level structure. Отсутствие таблицы в старом файле
+      // бэкапа (например, collections в файле, сделанном ДО фичи плейлистов)
+      // не фейлим — считаем пустым массивом. Это делает форму обратно
+      // совместимой со старыми бэкапами. Проверяем только тип: если что-то
+      // есть, но это не массив — ошибка.
       for (const table of BACKUP_TABLES) {
-        if (!Array.isArray(data[table])) {
-          return res.status(400).json({ error: `Отсутствуют данные для таблицы ${table}` });
+        if (data[table] === undefined) {
+          data[table] = [];
+        } else if (!Array.isArray(data[table])) {
+          return res.status(400).json({ error: `Поле ${table} должно быть массивом` });
         }
       }
       const unknownTables = Object.keys(data).filter(t => !BACKUP_TABLES.includes(t));
@@ -185,6 +196,16 @@ const AdminController = {
           required: ['token_id', 'media_id'],
           allowed: ['id', 'token_id', 'media_id', 'added_at'],
           types: { id: 'int', token_id: 'int', media_id: 'int', added_at: 'datetime' },
+        },
+        collections: {
+          required: ['token_id', 'name'],
+          allowed: ['id', 'token_id', 'name', 'created_at'],
+          types: { id: 'int', token_id: 'int', name: 'string', created_at: 'datetime' },
+        },
+        collection_items: {
+          required: ['collection_id', 'media_id'],
+          allowed: ['id', 'collection_id', 'media_id', 'added_at'],
+          types: { id: 'int', collection_id: 'int', media_id: 'int', added_at: 'datetime' },
         },
       };
 
@@ -242,9 +263,17 @@ const AdminController = {
       }
 
       await client.query('BEGIN');
-      await client.query('TRUNCATE TABLE favorites, media, subcategories, categories, tokens CASCADE');
+      // CASCADE каскадно чистит зависимые таблицы, но перечисляем всё явно
+      // для читаемости и защиты от того, что кто-то отключит CASCADE
+      // при ручном рефакторе схемы. collection_items и collections тоже
+      // здесь — они появились вместе с фичей плейлистов.
+      await client.query('TRUNCATE TABLE collection_items, collections, favorites, media, subcategories, categories, tokens CASCADE');
 
-      const insertOrder = ['categories', 'tokens', 'subcategories', 'media', 'favorites'];
+      // FK-порядок: parents перед children. tokens и media — parents
+      // сразу для нескольких child-таблиц (favorites, collections,
+      // collection_items). collections должны быть ПОСЛЕ tokens и ДО
+      // collection_items.
+      const insertOrder = ['categories', 'tokens', 'subcategories', 'media', 'favorites', 'collections', 'collection_items'];
       for (const table of insertOrder) {
         const rows = data[table];
         if (rows.length === 0) continue;
