@@ -378,7 +378,10 @@
   box-shadow: var(--shadow-lg);
   flex-direction: column;
 }
-.multi-select.open .multi-select-panel {
+/* Панель монтируется в <body> (см. MultiSelect._build), поэтому селектор
+   на потомок .multi-select.open НЕ сработал бы. Показываем через класс
+   .open прямо на панели — синхронизирует MultiSelect.open()/close(). */
+.multi-select-panel.open {
   display: flex;
 }
 /* Внутренний скролл-контейнер. Отступ 6px по всем сторонам оставляет

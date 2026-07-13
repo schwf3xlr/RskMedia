@@ -147,6 +147,13 @@ Object.keys(CATEGORY_EMPTY).forEach(id => initAdminSelect(id));
 Object.keys(SUBCATEGORY_EMPTY).forEach(id => initAdminSelect(id));
 Object.keys(AGE_EMPTY).forEach(id => initAdminSelect(id, ageOptions(AGE_EMPTY[id])));
 
+// Тип токена — фиксированные два варианта. Дефолт "client".
+initAdminSelect('tokenType', [
+  { id: 'client', name: 'Client' },
+  { id: 'admin',  name: 'Admin' },
+]);
+writeSelect('tokenType', 'client');
+
 async function loadAdminCategories() {
   const cats = await categories.loadAll();
   state.allAdminCategories = cats;
@@ -1085,7 +1092,7 @@ async function loadTokens() {
 }
 
 document.getElementById('createTokenBtn')?.addEventListener('click', async () => {
-  const type = document.getElementById('tokenType').value;
+  const type = readSelect('tokenType') || 'client';
   const expiresAt = document.getElementById('tokenExpires').value || null;
 
   try {

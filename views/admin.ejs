@@ -234,10 +234,7 @@
     <div class="upload-card">
       <div class="upload-card-title">Создать токен</div>
       <div class="token-form">
-        <select id="tokenType" class="filter-select" required>
-          <option value="client">Client</option>
-          <option value="admin">Admin</option>
-        </select>
+        <div class="multi-select" id="tokenType" data-mode="single" data-empty="Тип токена"></div>
         <input type="date" id="tokenExpires" class="token-input" placeholder="Срок действия (опционально)">
         <button type="button" class="btn btn-primary" id="createTokenBtn">
           <i data-lucide="plus" class="icon-md"></i>

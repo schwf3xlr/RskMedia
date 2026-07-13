@@ -675,6 +675,10 @@ class MultiSelect {
       MultiSelect._openInstance.close();
     }
     this.container.classList.add('open');
+    // Панель живёт в <body>, поэтому селектор .multi-select.open
+    // .multi-select-panel не сработает — навешиваем класс на неё
+    // напрямую. Иначе offsetHeight = 0 и позиционирование даёт NaN/0.
+    this.panel.classList.add('open');
     this.toggle.setAttribute('aria-expanded', 'true');
     MultiSelect._openInstance = this;
     // Позиционируем только после того, как панель стала flex-визимой
@@ -691,6 +695,7 @@ class MultiSelect {
 
   close() {
     this.container.classList.remove('open');
+    this.panel.classList.remove('open');
     this.toggle.setAttribute('aria-expanded', 'false');
     if (this._onScroll) {
       window.removeEventListener('scroll', this._onScroll, { capture: true });
