@@ -1913,6 +1913,19 @@ body.modal-open .shortcut-help-btn {
   display: flex;
   gap: 6px;
 }
+/* Специальный стиль для заголовка при 404 — коллекция не найдена.
+   Убираем accent-полосу и лишние отступы, оставляем только
+   breadcrumb "← К коллекциям", чтобы пользователь мог вернуться. */
+.collection-heading-empty {
+  border-left: 1px solid var(--border);
+  padding: 8px 12px;
+}
+.collection-heading-empty .collection-heading-back {
+  gap: 6px;
+}
+.collection-heading-empty .collection-heading-back span {
+  font-size: 14px;
+}
 
 /* Popup "+" рядом с ❤️ в модалке медиа */
 .collections-popup {

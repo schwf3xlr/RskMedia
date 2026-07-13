@@ -319,7 +319,23 @@ const gallery = {
       if (c?.name) name = c.name;
       if (typeof c?.count === 'number') count = c.count;
       document.title = `${c.name} — RskMedia`;
-    } catch { /* если 404 — заголовок с дефолтом */ }
+    } catch {
+      // 404: коллекция не существует / чужая. Не рендерим заголовок с
+      // кнопками rename/delete — иначе пользователь может пытаться
+      // "переименовать несуществующее". Просто минимальная навигация
+      // назад к списку — как хлебная крошка.
+      const minimal = document.createElement('div');
+      minimal.className = 'collection-heading collection-heading-empty';
+      minimal.innerHTML = `
+        <a class="collection-heading-back" href="/collections" title="К коллекциям" aria-label="К списку коллекций">
+          <i data-lucide="chevron-left" class="icon-md"></i>
+          <span>К коллекциям</span>
+        </a>
+      `;
+      container.insertBefore(minimal, container.firstElementChild);
+      if (window.lucide) window.lucide.createIcons();
+      return;
+    }
 
     const heading = document.createElement('div');
     heading.className = 'collection-heading';
@@ -367,9 +383,13 @@ const gallery = {
     });
 
     heading.querySelector('#collectionDeleteBtn')?.addEventListener('click', async () => {
-      // window.confirm — коллекции удаляют редко, ради этого не тянем
-      // ещё один component.
-      if (!window.confirm(`Удалить коллекцию «${name}»? Медиа останутся в галерее.`)) return;
+      // Используем локальный showConfirm (в стиль сайта), а не window.confirm
+      // — единообразие с diaogами удаления медиа в модалке и переименования.
+      const ok = await showConfirm(
+        `Удалить коллекцию «${name}»? Медиа останутся в галерее.`,
+        { okText: 'Удалить', icon: 'trash-2' }
+      );
+      if (!ok) return;
       try {
         await collections.remove(this.collectionId);
         toast.show('Коллекция удалена');

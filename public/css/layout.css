@@ -629,17 +629,28 @@
   .navbar-menu .navbar-link {
     flex: 1;
     flex-direction: column;
-    gap: 2px;
-    padding: 6px 4px;
-    font-size: 11px;
+    gap: 0;
+    padding: 10px 4px;
+    /* На мобильных подписи под иконками съедают место и мешают
+       касаться. Убираем текст через font-size:0 — SVG с явным
+       width/height атрибутами от этого не страдает. */
+    font-size: 0;
+    line-height: 0;
     justify-content: center;
     text-align: center;
     min-width: 0;
   }
 
   .navbar-menu .navbar-link .icon-md {
-    width: 20px;
-    height: 20px;
+    width: 24px;
+    height: 24px;
+  }
+  /* Theme-toggle: чтобы иконка солнца/луны/монитора смотрелась в один
+     ряд с остальными (24×24) — иначе 18px оригинала будет выглядеть
+     заметно меньше. */
+  .navbar-theme-toggle i {
+    width: 24px;
+    height: 24px;
   }
 
   /* Bottom nav is always visible on mobile — no hamburger needed. */
