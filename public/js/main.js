@@ -526,6 +526,16 @@ function showPrompt({ title, message, placeholder = '', okText = 'Создать
 const collectionsUI = {
   _panel: null,
 
+  // Toggle-режим: если popup уже открыт для ЭТОГО же mediaId — закрываем
+  // и уходим. Иначе (первый клик, или другой media) — открываем.
+  toggleAddPopup(anchorEl, mediaId) {
+    if (this._panel && this._anchor === anchorEl && this._mediaId === mediaId) {
+      this._destroy();
+      return;
+    }
+    this.openAddPopup(anchorEl, mediaId);
+  },
+
   async openAddPopup(anchorEl, mediaId) {
     // Свой список загружаем каждый раз — коллекции могут обновиться после
     // создания в другом месте UI.
@@ -652,21 +662,38 @@ const collectionsUI = {
 
     this._panel = panel;
     this._anchor = anchorEl;
+    this._mediaId = mediaId;
+    anchorEl.classList.add('active');
 
-    // Закрытие: клик снаружи или Esc.
+    // Закрытие: любой клик, попавший НЕ в panel и НЕ в анкор-кнопку
+    // (проверяем через contains, чтобы SVG внутри кнопки тоже считался
+    // "по кнопке"). Ловим по фазе capture — так модальные обработчики,
+    // которые могут stopPropagation() (свайпы/idle), не съедают событие.
     const onDocClick = (e) => {
-      if (!panel.contains(e.target) && e.target !== anchorEl) this._destroy();
+      if (panel.contains(e.target)) return;
+      if (anchorEl.contains(e.target)) return;
+      this._destroy();
     };
     const onKey = (e) => { if (e.key === 'Escape') this._destroy(); };
-    // setTimeout — иначе клик, открывший popup, тут же закроет его.
-    setTimeout(() => document.addEventListener('click', onDocClick), 0);
+    // rAF — надёжнее setTimeout(0) в браузерах с быстрым event loop:
+    // гарантирует что тот же click, который открыл popup, уже завершился.
+    requestAnimationFrame(() => {
+      document.addEventListener('click', onDocClick, true);
+      document.addEventListener('touchend', onDocClick, true);
+    });
     document.addEventListener('keydown', onKey);
-    this._offClick = () => document.removeEventListener('click', onDocClick);
+    this._offClick = () => {
+      document.removeEventListener('click', onDocClick, true);
+      document.removeEventListener('touchend', onDocClick, true);
+    };
     this._offKey = () => document.removeEventListener('keydown', onKey);
   },
 
   _destroy() {
+    if (this._anchor) this._anchor.classList.remove('active');
     if (this._panel) { this._panel.remove(); this._panel = null; }
+    this._anchor = null;
+    this._mediaId = null;
     if (this._offClick) { this._offClick(); this._offClick = null; }
     if (this._offKey) { this._offKey(); this._offKey = null; }
   },

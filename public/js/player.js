@@ -793,16 +793,17 @@ const gallery = {
       });
     }
 
-    // Кнопка "+" — открыть popup выбора коллекций для текущего медиа.
-    // stopPropagation, чтобы клик не всплыл до document и не закрыл
-    // popup сразу через collectionsUI's outside-click listener.
+    // Кнопка "+" — toggle popup выбора коллекций для текущего медиа.
+    // Повторный клик по кнопке или клик по анкор-контенту закрывает popup;
+    // клик по любому другому месту (медиа, фон модалки) тоже закрывает,
+    // потому что collectionsUI ловит клик на capture-фазе и проверяет
+    // и по panel.contains, и по anchor.contains.
     const addCollectionBtn = document.getElementById('modalAddToCollection');
     if (addCollectionBtn) {
-      addCollectionBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
+      addCollectionBtn.addEventListener('click', () => {
         const currentId = this.currentModalId;
         if (!currentId) return;
-        collectionsUI.openAddPopup(addCollectionBtn, currentId);
+        collectionsUI.toggleAddPopup(addCollectionBtn, currentId);
       });
     }
 
@@ -1534,6 +1535,10 @@ const gallery = {
     modal.setAttribute('aria-hidden', 'true');
     document.body.style.overflow = '';
     document.body.classList.remove('modal-open');
+
+    // Popup выбора коллекций живёт в body — при закрытии модалки нужно
+    // явно его убить, иначе он останется висеть без анкора.
+    collectionsUI._destroy();
 
     const editPanel = document.getElementById('modalEditPanel');
     if (editPanel) editPanel.hidden = true;

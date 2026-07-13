@@ -541,7 +541,8 @@
 .modal.idle .modal-close,
 .modal.idle .modal-edit,
 .modal.idle .modal-nav,
-.modal.idle .modal-bottom-bar {
+.modal.idle .modal-bottom-bar,
+.modal.idle .modal-add-collection {
   opacity: 0;
   pointer-events: none;
 }
@@ -2025,25 +2026,35 @@ body.modal-open .shortcut-help-btn {
   75% { transform: translateX(4px); }
 }
 
-/* Кнопка "+" рядом с ❤️ в модалке медиа */
+/* Кнопка "+" рядом с ❤️ в модалке медиа. Совпадает по размеру и
+   обводке с .modal-favorite, чтобы не выделяться в bottom-bar'e. */
 .modal-add-collection {
   position: absolute;
   bottom: 20px;
   right: 76px;
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.15);
   color: white;
-  border: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  padding: 0;
   transition: var(--transition);
   z-index: 5;
 }
-.modal-add-collection:hover { background: var(--accent); transform: scale(1.05); }
+.modal-add-collection:hover {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.3);
+  transform: scale(1.05);
+}
+.modal-add-collection.active {
+  background: var(--accent);
+  border-color: var(--accent);
+}
 
 @media (max-width: 768px) {
   .collections-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
