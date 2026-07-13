@@ -117,6 +117,14 @@
       </svg>
     </button>
   </div>
+  <!-- "+" в коллекцию. Минималистичный: только plus-иконка, при клике
+       popup со списком коллекций. Если коллекций нет — сразу открывает
+       окно создания. -->
+  <button class="modal-add-collection" id="modalAddToCollection" aria-label="Добавить в коллекцию" title="Добавить в коллекцию">
+    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 5v14M5 12h14"/>
+    </svg>
+  </button>
 </div>
 
 <script src="/js/player.js" type="module" nonce="<%= nonce %>"></script>

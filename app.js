@@ -213,6 +213,7 @@ app.use('/api/auth', csrfProtection, require('./routes/auth'));
 app.use('/api/media', apiLimiter, authenticateToken, csrfProtection, require('./routes/media'));
 app.use('/api/categories', apiLimiter, authenticateToken, csrfProtection, require('./routes/categories'));
 app.use('/api/favorites', apiLimiter, authenticateToken, csrfProtection, require('./routes/favorites'));
+app.use('/api/collections', apiLimiter, authenticateToken, csrfProtection, require('./routes/collections'));
 app.use('/api/admin', authenticateToken, requireAdmin, csrfProtection, require('./routes/admin'));
 
 // Page routes
@@ -226,6 +227,22 @@ app.get('/', authenticateToken, (req, res) => {
 
 app.get('/favorites', authenticateToken, (req, res) => {
   res.render('page', { title: 'Избранное - RskMedia', user: req.user, activePage: 'favorites' });
+});
+
+// Список коллекций — отдельный view с сеткой карточек-коллекций.
+app.get('/collections', authenticateToken, (req, res) => {
+  res.render('collections-list', { title: 'Коллекции - RskMedia', user: req.user });
+});
+
+// Просмотр одной коллекции — переиспользуем page.ejs с флагом
+// collectionId в meta, чтобы фронт понял, откуда тянуть медиа и фильтры.
+app.get('/collections/:id(\\d+)', authenticateToken, (req, res) => {
+  res.render('page', {
+    title: 'Коллекция - RskMedia',
+    user: req.user,
+    activePage: 'collections',
+    collectionId: req.params.id,
+  });
 });
 
 app.get('/admin', authenticateToken, requireAdmin, (req, res) => {

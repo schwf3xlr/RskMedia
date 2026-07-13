@@ -48,5 +48,10 @@
        to prevent the AGE_RATINGS array from drifting between backend and
        client (which used to require editing two files). -->
   <meta name="app-config" content='<%= JSON.stringify(CLIENT_CONFIG) %>'>
+  <% if (typeof collectionId !== 'undefined' && collectionId) { %>
+  <!-- Просмотр внутри коллекции — фронт по этому meta переключает
+       эндпоинт /api/collections/:id/media и рендерит заголовок. -->
+  <meta name="collection-id" content="<%= collectionId %>">
+  <% } %>
 </head>
 <body>

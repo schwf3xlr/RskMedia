@@ -436,6 +436,242 @@ const favorites = {
   },
 };
 
+const collections = {
+  async list() { return api.get('/api/collections'); },
+  async create(name) { return api.post('/api/collections', { name }); },
+  async rename(id, name) { return api.put(`/api/collections/${id}`, { name }); },
+  async remove(id) { return api.delete(`/api/collections/${id}`); },
+  async containingMedia(mediaId) {
+    // Массив коллекций пользователя, в которых уже лежит это медиа.
+    // Используется для чекбоксов в popup "+".
+    return api.get(`/api/collections/for-media/${mediaId}`);
+  },
+  async addItem(collectionId, mediaId) {
+    return api.post(`/api/collections/${collectionId}/items`, { media_id: mediaId });
+  },
+  async removeItem(collectionId, mediaId) {
+    return api.delete(`/api/collections/${collectionId}/items/${mediaId}`);
+  },
+};
+
+// Inline prompt-диалог. Существующий showConfirm умеет только Y/N, а
+// для создания коллекции нужен ввод названия. Возвращает Promise<string|null>:
+// string когда пользователь подтвердил, null — отменил.
+function showPrompt({ title, message, placeholder = '', okText = 'Создать', cancelText = 'Отмена', initial = '', maxLength = 100 }) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'confirm-overlay';
+    const modal = document.createElement('div');
+    modal.className = 'confirm-modal';
+
+    if (title) {
+      const h = document.createElement('h3');
+      h.className = 'confirm-title';
+      h.textContent = title;
+      modal.appendChild(h);
+    }
+    if (message) {
+      const p = document.createElement('p');
+      p.className = 'confirm-message';
+      p.textContent = message;
+      modal.appendChild(p);
+    }
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'prompt-input';
+    input.placeholder = placeholder;
+    input.maxLength = maxLength;
+    input.value = initial;
+    modal.appendChild(input);
+
+    const buttons = document.createElement('div');
+    buttons.className = 'confirm-buttons';
+    const cancel = document.createElement('button');
+    cancel.className = 'btn btn-secondary';
+    cancel.textContent = cancelText;
+    const ok = document.createElement('button');
+    ok.className = 'btn btn-primary';
+    ok.textContent = okText;
+    buttons.append(cancel, ok);
+    modal.appendChild(buttons);
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+    setTimeout(() => input.focus(), 50);
+
+    const close = (value) => {
+      overlay.remove();
+      document.removeEventListener('keydown', onKey);
+      resolve(value);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') close(null);
+      if (e.key === 'Enter') { e.preventDefault(); const v = input.value.trim(); if (v) close(v); }
+    };
+    document.addEventListener('keydown', onKey);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(null); });
+    cancel.addEventListener('click', () => close(null));
+    ok.addEventListener('click', () => {
+      const v = input.value.trim();
+      if (v) close(v);
+      else { input.focus(); input.classList.add('prompt-input-error'); setTimeout(() => input.classList.remove('prompt-input-error'), 500); }
+    });
+  });
+}
+
+// UI-хелпер: показать popup со списком коллекций рядом с элементом-анкором
+// (обычно кнопка "+" в модалке). Позволяет тогглить membership конкретного
+// media в моих коллекциях. Если коллекций нет — сразу открывается диалог
+// создания.
+const collectionsUI = {
+  _panel: null,
+
+  async openAddPopup(anchorEl, mediaId) {
+    // Свой список загружаем каждый раз — коллекции могут обновиться после
+    // создания в другом месте UI.
+    let list;
+    try {
+      list = await collections.list();
+    } catch (err) {
+      toast.show(err.message || 'Ошибка загрузки коллекций', 'error');
+      return;
+    }
+
+    if (!list.length) {
+      const name = await showPrompt({
+        title: 'Первая коллекция',
+        message: 'Создайте коллекцию, чтобы добавлять сюда медиа.',
+        placeholder: 'Название',
+        okText: 'Создать',
+      });
+      if (!name) return;
+      try {
+        const created = await collections.create(name);
+        await collections.addItem(created.id, mediaId);
+        toast.show(`Добавлено в «${created.name}»`);
+      } catch (err) {
+        toast.show(err.message || 'Ошибка создания коллекции', 'error');
+      }
+      return;
+    }
+
+    // Загружаем текущее membership только для этого media, чтобы
+    // проставить чекбоксы.
+    let containing = [];
+    try { containing = await collections.containingMedia(mediaId); } catch {}
+    const containingIds = new Set(containing.map(c => c.id));
+
+    // Строим и позиционируем popup (не MultiSelect, потому что тут ещё
+    // нужна кнопка "Создать новую" внутри).
+    this._destroy();
+    const panel = document.createElement('div');
+    panel.className = 'collections-popup';
+    panel.setAttribute('role', 'menu');
+
+    const header = document.createElement('div');
+    header.className = 'collections-popup-header';
+    header.textContent = 'В коллекции:';
+    panel.appendChild(header);
+
+    const scroll = document.createElement('div');
+    scroll.className = 'collections-popup-scroll';
+    for (const c of list) {
+      const row = document.createElement('label');
+      row.className = 'collections-popup-option';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = containingIds.has(c.id);
+      cb.addEventListener('change', async () => {
+        cb.disabled = true;
+        try {
+          if (cb.checked) {
+            await collections.addItem(c.id, mediaId);
+            toast.show(`Добавлено в «${c.name}»`);
+          } else {
+            await collections.removeItem(c.id, mediaId);
+            toast.show(`Удалено из «${c.name}»`);
+          }
+        } catch (err) {
+          cb.checked = !cb.checked;
+          toast.show(err.message || 'Ошибка', 'error');
+        } finally {
+          cb.disabled = false;
+        }
+      });
+      const text = document.createElement('span');
+      text.textContent = c.name;
+      const count = document.createElement('span');
+      count.className = 'collections-popup-count';
+      count.textContent = c.count;
+      row.append(cb, text, count);
+      scroll.appendChild(row);
+    }
+    panel.appendChild(scroll);
+
+    const addNew = document.createElement('button');
+    addNew.type = 'button';
+    addNew.className = 'collections-popup-newbtn';
+    addNew.innerHTML = '<i data-lucide="plus" class="icon-sm"></i> Новая коллекция';
+    addNew.addEventListener('click', async () => {
+      const name = await showPrompt({
+        title: 'Новая коллекция',
+        placeholder: 'Название',
+        okText: 'Создать',
+      });
+      if (!name) return;
+      try {
+        const created = await collections.create(name);
+        await collections.addItem(created.id, mediaId);
+        toast.show(`Добавлено в «${created.name}»`);
+        this._destroy();
+      } catch (err) {
+        toast.show(err.message || 'Ошибка', 'error');
+      }
+    });
+    panel.appendChild(addNew);
+
+    document.body.appendChild(panel);
+    if (window.lucide) window.lucide.createIcons();
+
+    // Позиционирование: под анкор, прижимаем к правому краю viewport'а,
+    // если справа не хватает; открываем вверх, если снизу мало места.
+    const rect = anchorEl.getBoundingClientRect();
+    const GAP = 6, M = 8;
+    panel.style.minWidth = '220px';
+    const pw = panel.offsetWidth;
+    let left = rect.right - pw;
+    if (left < M) left = M;
+    if (left + pw + M > window.innerWidth) left = window.innerWidth - pw - M;
+    const below = window.innerHeight - rect.bottom - GAP - M;
+    const above = rect.top - GAP - M;
+    const openUp = below < 200 && above > below;
+    panel.style.left = `${left}px`;
+    panel.style.top = openUp
+      ? `${rect.top - GAP - panel.offsetHeight}px`
+      : `${rect.bottom + GAP}px`;
+
+    this._panel = panel;
+    this._anchor = anchorEl;
+
+    // Закрытие: клик снаружи или Esc.
+    const onDocClick = (e) => {
+      if (!panel.contains(e.target) && e.target !== anchorEl) this._destroy();
+    };
+    const onKey = (e) => { if (e.key === 'Escape') this._destroy(); };
+    // setTimeout — иначе клик, открывший popup, тут же закроет его.
+    setTimeout(() => document.addEventListener('click', onDocClick), 0);
+    document.addEventListener('keydown', onKey);
+    this._offClick = () => document.removeEventListener('click', onDocClick);
+    this._offKey = () => document.removeEventListener('keydown', onKey);
+  },
+
+  _destroy() {
+    if (this._panel) { this._panel.remove(); this._panel = null; }
+    if (this._offClick) { this._offClick(); this._offClick = null; }
+    if (this._offKey) { this._offKey(); this._offKey = null; }
+  },
+};
+
 // Custom dropdown в стиль сайта. Заменяет нативный <select> (и особенно
 // плох на мобильных, где системный picker закрывает пол-формы). Живёт в
 // main.js, потому что и player.js (галерея), и admin.js (формы загрузки и
@@ -716,7 +952,7 @@ class MultiSelect {
   }
 }
 
-export { auth, api, toast, categories, favorites, events, MultiSelect };
+export { auth, api, toast, categories, favorites, events, MultiSelect, collections, collectionsUI, showPrompt };
 
 const logoutBtn = document.getElementById('logoutBtn');
 if (logoutBtn) {

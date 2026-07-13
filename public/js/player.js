@@ -1,4 +1,4 @@
-import { auth, api, toast, categories, favorites, events, MultiSelect } from './main.js';
+import { auth, api, toast, categories, favorites, events, MultiSelect, collectionsUI, collections, showPrompt } from './main.js';
 
 function showConfirm(message, options = {}) {
   return new Promise(resolve => {
@@ -50,6 +50,10 @@ const gallery = {
   hasMore: true,
   filters: {},
   isFavorites: window.location.pathname === '/favorites',
+  // collectionId читаем из <meta>, положенного app.js для роута
+  // /collections/:id. Если он есть — работаем в "режиме коллекции":
+  // grid, endpoint, фильтры и заголовок отличаются от галереи.
+  collectionId: (document.querySelector('meta[name="collection-id"]')?.content) || null,
   zoom: null,
   favoriteCache: new Map(),
   focusTrap: null,
@@ -76,11 +80,18 @@ const gallery = {
     // real geometry — otherwise the page is a blank white block for the
     // 200-800ms it takes categories + media to arrive.
     this.renderInitialSkeletons();
-    // Categories + subcategories are independent — fetch in parallel.
-    // Age + sort фильтры инициализируются синхронно из статических данных.
-    this.initAgeFilter();
+    // Sort фильтр инициализируется синхронно из статики.
     this.initSortFilter();
-    await Promise.all([this.loadCategories(), this.loadSubcategories()]);
+    if (this.collectionId) {
+      // Режим коллекции: и категории, и подкатегории, и возраста берём
+      // из /api/collections/:id/filters — только фактические значения,
+      // как просил пользователь. Заголовок сверху рендерим отдельно.
+      await Promise.all([this.loadCollectionFilters(), this.setupCollectionHeader()]);
+    } else {
+      // Обычная галерея / избранное — глобальные категории и все возраста.
+      this.initAgeFilter();
+      await Promise.all([this.loadCategories(), this.loadSubcategories()]);
+    }
     this.restoreFiltersFromURL();
     this.setupFilters();
     this.setupInfiniteScroll();
@@ -267,6 +278,106 @@ const gallery = {
     this._subcategoryMs.setOptions(subs.map(s => ({ id: s.id, name: s.name })));
   },
 
+  async loadCollectionFilters() {
+    // В коллекции показываем только те значения, что реально там есть.
+    // Backend отдаёт готовые массивы через /api/collections/:id/filters.
+    let data;
+    try {
+      data = await api.get(`/api/collections/${this.collectionId}/filters`);
+    } catch (err) {
+      console.error('Collection filters load error:', err);
+      // Fallback: пустые опции (empty state в MultiSelect отработает).
+      data = { categories: [], subcategories: [], ages: [] };
+    }
+    const catEl = document.getElementById('categoryFilter');
+    if (catEl) {
+      this._categoryMs ||= new MultiSelect(catEl);
+      this._categoryMs.setOptions(data.categories.map(c => ({ id: c.id, name: c.name })));
+    }
+    const subEl = document.getElementById('subcategoryFilter');
+    if (subEl) {
+      this._subcategoryMs ||= new MultiSelect(subEl);
+      this._subcategoryMs.setOptions(data.subcategories.map(s => ({ id: s.id, name: s.name })));
+    }
+    const ageEl = document.getElementById('ageFilter');
+    if (ageEl) {
+      this._ageMs ||= new MultiSelect(ageEl);
+      this._ageMs.setOptions(data.ages.map(a => ({ id: a, name: a >= 19 ? `${a}+` : String(a) })));
+    }
+  },
+
+  // Заголовок над сеткой в режиме коллекции. Отдельный blob над `.filters`
+  // — визуально ясно, что находишься в коллекции, а не в общей галерее.
+  // Кнопки: назад к списку, переименовать, скачать zip, удалить.
+  async setupCollectionHeader() {
+    const container = document.querySelector('.page-container');
+    if (!container) return;
+    let name = 'Коллекция';
+    let count = 0;
+    try {
+      const c = await api.get(`/api/collections/${this.collectionId}`);
+      if (c?.name) name = c.name;
+      if (typeof c?.count === 'number') count = c.count;
+      document.title = `${c.name} — RskMedia`;
+    } catch { /* если 404 — заголовок с дефолтом */ }
+
+    const heading = document.createElement('div');
+    heading.className = 'collection-heading';
+    heading.innerHTML = `
+      <a class="collection-heading-back" href="/collections" title="К коллекциям" aria-label="К списку коллекций">
+        <i data-lucide="chevron-left" class="icon-md"></i>
+      </a>
+      <span class="collection-heading-icon"><i data-lucide="library" class="icon-md"></i></span>
+      <span class="collection-heading-name"></span>
+      <span class="collection-heading-count"></span>
+      <div class="collection-heading-actions">
+        <button type="button" class="icon-btn" id="collectionRenameBtn" aria-label="Переименовать" title="Переименовать">
+          <i data-lucide="pencil" class="icon-sm"></i>
+        </button>
+        <a class="icon-btn" href="/api/collections/${this.collectionId}/export" download title="Скачать zip" aria-label="Скачать zip">
+          <i data-lucide="download" class="icon-sm"></i>
+        </a>
+        <button type="button" class="icon-btn danger" id="collectionDeleteBtn" aria-label="Удалить коллекцию" title="Удалить коллекцию">
+          <i data-lucide="trash-2" class="icon-sm"></i>
+        </button>
+      </div>
+    `;
+    heading.querySelector('.collection-heading-name').textContent = name;
+    heading.querySelector('.collection-heading-count').textContent = `${count} медиа`;
+    // Вставляем ПЕРЕД первым дочерним элементом — раньше pullToRefresh,
+    // фильтров и сетки.
+    container.insertBefore(heading, container.firstElementChild);
+    if (window.lucide) window.lucide.createIcons();
+
+    heading.querySelector('#collectionRenameBtn')?.addEventListener('click', async () => {
+      const newName = await showPrompt({
+        title: 'Переименовать коллекцию',
+        placeholder: 'Название',
+        initial: name,
+        okText: 'Сохранить',
+      });
+      if (!newName || newName === name) return;
+      try {
+        await collections.rename(this.collectionId, newName);
+        heading.querySelector('.collection-heading-name').textContent = newName;
+        document.title = `${newName} — RskMedia`;
+        name = newName;
+        toast.show('Переименовано');
+      } catch (err) { toast.show(err.message || 'Ошибка', 'error'); }
+    });
+
+    heading.querySelector('#collectionDeleteBtn')?.addEventListener('click', async () => {
+      // window.confirm — коллекции удаляют редко, ради этого не тянем
+      // ещё один component.
+      if (!window.confirm(`Удалить коллекцию «${name}»? Медиа останутся в галерее.`)) return;
+      try {
+        await collections.remove(this.collectionId);
+        toast.show('Коллекция удалена');
+        window.location.href = '/collections';
+      } catch (err) { toast.show(err.message || 'Ошибка', 'error'); }
+    });
+  },
+
   initAgeFilter() {
     const el = document.getElementById('ageFilter');
     if (!el) return;
@@ -355,7 +466,9 @@ const gallery = {
     if (emptyState) emptyState.classList.add('hidden');
 
     try {
-      const endpoint = this.isFavorites ? '/api/favorites' : '/api/media';
+      const endpoint = this.collectionId
+        ? `/api/collections/${this.collectionId}/media`
+        : (this.isFavorites ? '/api/favorites' : '/api/media');
       const params = new URLSearchParams({
         page: this.page,
         limit: 20,
@@ -375,7 +488,10 @@ const gallery = {
             emptyState.classList.remove('hidden');
             const title = document.getElementById('emptyTitle');
             const text = document.getElementById('emptyText');
-            if (this.isFavorites) {
+            if (this.collectionId) {
+              if (title) title.textContent = 'Коллекция пуста';
+              if (text) text.textContent = 'Добавьте медиа сюда через кнопку «+» в галерее или избранном';
+            } else if (this.isFavorites) {
               if (title) title.textContent = 'Нет избранного';
               if (text) text.textContent = 'Добавьте медиа в избранное, нажав на сердечко';
             } else {
@@ -655,6 +771,19 @@ const gallery = {
           favoriteBtn.classList.add('active');
           this.favoriteCache.set(currentId, true);
         }
+      });
+    }
+
+    // Кнопка "+" — открыть popup выбора коллекций для текущего медиа.
+    // stopPropagation, чтобы клик не всплыл до document и не закрыл
+    // popup сразу через collectionsUI's outside-click listener.
+    const addCollectionBtn = document.getElementById('modalAddToCollection');
+    if (addCollectionBtn) {
+      addCollectionBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const currentId = this.currentModalId;
+        if (!currentId) return;
+        collectionsUI.openAddPopup(addCollectionBtn, currentId);
       });
     }
 

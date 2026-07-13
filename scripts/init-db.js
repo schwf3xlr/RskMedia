@@ -53,6 +53,22 @@ CREATE TABLE IF NOT EXISTS favorites (
     UNIQUE(token_id, media_id)
 );
 
+CREATE TABLE IF NOT EXISTS collections (
+    id SERIAL PRIMARY KEY,
+    token_id INTEGER REFERENCES tokens(id) ON DELETE CASCADE NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(token_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS collection_items (
+    id SERIAL PRIMARY KEY,
+    collection_id INTEGER REFERENCES collections(id) ON DELETE CASCADE NOT NULL,
+    media_id INTEGER REFERENCES media(id) ON DELETE CASCADE NOT NULL,
+    added_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(collection_id, media_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_media_uploaded_at ON media(uploaded_at DESC);
 -- Composite index covers "ORDER BY uploaded_at DESC, id DESC" used by every list query
 CREATE INDEX IF NOT EXISTS idx_media_uploaded_id ON media(uploaded_at DESC, id DESC);
@@ -72,6 +88,15 @@ CREATE INDEX IF NOT EXISTS idx_favorites_media_id ON favorites(media_id);
 CREATE INDEX IF NOT EXISTS idx_subcategories_category_id ON subcategories(category_id);
 CREATE INDEX IF NOT EXISTS idx_tokens_type ON tokens(type);
 CREATE INDEX IF NOT EXISTS idx_tokens_active ON tokens(is_active);
+-- collections: UNIQUE(token_id, name) уже даёт индекс (token_id, name),
+-- покрывающий "все мои коллекции". Отдельный индекс на token_id для
+-- сортировки по created_at и COUNT.
+CREATE INDEX IF NOT EXISTS idx_collections_token_created ON collections(token_id, created_at DESC);
+-- UNIQUE(collection_id, media_id) даёт композитный индекс на (collection_id, media_id)
+-- — покрывает "медиа этой коллекции с сортировкой по added_at". Нужен ещё индекс
+-- на media_id для reverse lookup: "в каких коллекциях лежит это медиа" (кнопка + в модалке).
+CREATE INDEX IF NOT EXISTS idx_collection_items_media ON collection_items(media_id);
+CREATE INDEX IF NOT EXISTS idx_collection_items_added ON collection_items(collection_id, added_at DESC, media_id DESC);
 `;
 
 async function seedCategories() {

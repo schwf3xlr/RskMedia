@@ -1,0 +1,35 @@
+<%- include('partials/header') %>
+<%- include('partials/navbar', { activePage: 'collections', user: user }) %>
+
+<div class="page-container">
+  <div class="collections-header">
+    <div class="collections-header-title">
+      <i data-lucide="library" class="icon-lg icon-accent"></i>
+      <span>Мои коллекции</span>
+      <span class="collections-header-count" id="collectionsCount"></span>
+    </div>
+    <button class="btn btn-primary" id="createCollectionBtn">
+      <i data-lucide="plus" class="icon-md"></i>
+      Новая коллекция
+    </button>
+  </div>
+
+  <div class="collections-grid" id="collectionsGrid" role="list" aria-label="Коллекции"></div>
+
+  <div class="collections-empty hidden" id="collectionsEmpty">
+    <div class="collections-empty-icon"><i data-lucide="library" class="icon-lg"></i></div>
+    <div class="collections-empty-title">Пока нет коллекций</div>
+    <div class="collections-empty-text">Создайте первую и добавляйте туда медиа из галереи или избранного.</div>
+    <button class="btn btn-primary" id="createFirstCollectionBtn">
+      <i data-lucide="plus" class="icon-md"></i>
+      Создать первую коллекцию
+    </button>
+  </div>
+
+  <div class="loading-spinner hidden" id="loadingSpinner">
+    <div class="spinner"></div>
+  </div>
+</div>
+
+<%- include('partials/footer') %>
+<script src="/js/collections-list.js" type="module" nonce="<%= nonce %>"></script>
