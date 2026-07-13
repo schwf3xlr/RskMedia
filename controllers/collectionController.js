@@ -15,15 +15,13 @@ function proxyUrl(req, type, id) {
   return `${req.protocol}://${req.get('host')}/media/${type}/${id}`;
 }
 
-// Preview URL для превью-thumbnail'ов на карточке коллекции (не
-// enrichOne, потому что там нет полного media row — только id + s3_key).
-function previewThumbUrl(row, req, prefix) {
-  const id = row[`${prefix}_media_id`];
-  if (!id) return null;
-  if (USE_PROXY) return proxyUrl(req, 'thumb', id);
-  // Direct S3 не поддерживаем на preview (нет getSignedUrl без модели медиа);
-  // деплой с USE_MEDIA_PROXY=false → thumbs просто не покажутся.
-  return null;
+// Preview URL для превью-thumbnail'ов на карточке коллекции. Даём
+// только для USE_PROXY-режима — direct S3 требовал бы getSignedUrl,
+// не хочется усложнять.
+function thumbUrlFor(mediaId, req) {
+  if (!mediaId) return null;
+  if (!USE_PROXY) return null;
+  return proxyUrl(req, 'thumb', mediaId);
 }
 
 // Sort-фильтры "Фото"/"Видео" в UI на самом деле трансформируются в type.
@@ -37,17 +35,14 @@ const MAX_NAME_LEN = 100;
 const CollectionController = {
   async getAll(req, res) {
     const rows = await CollectionModel.getAllForToken(req.user.token_id);
-    // Обогащаем каждую коллекцию URL'ами превью-миниатюр.
     const collections = rows.map(r => ({
       id: r.id,
       name: r.name,
       created_at: r.created_at,
       count: r.count,
-      thumbs: [
-        previewThumbUrl(r, req, 'thumb1'),
-        previewThumbUrl(r, req, 'thumb2'),
-        previewThumbUrl(r, req, 'thumb3'),
-      ].filter(Boolean),
+      thumbs: (r.thumbs || [])
+        .map(t => thumbUrlFor(t.media_id, req))
+        .filter(Boolean),
     }));
     res.json(collections);
   },
@@ -188,10 +183,23 @@ const CollectionController = {
       [id]
     );
 
-    const safeName = owner.name.replace(/[^\p{L}\p{N}._-]+/gu, '_').slice(0, 60) || 'collection';
-    const filename = `rskmedia_${safeName}_${Date.now()}.zip`;
+    // HTTP-header не разрешает non-ASCII в значении (RFC 7230). Название
+    // коллекции может быть на любом языке, поэтому:
+    // 1) fallback filename= с ASCII-транслитом (не идеально, но браузер
+    //    поймёт как имя файла даже если не понимает filename*=)
+    // 2) RFC 5987 filename*=UTF-8''<percent-encoded> — современные браузеры
+    //    возьмут отсюда правильное имя с кириллицей.
+    const rawName = owner.name.replace(/[^\p{L}\p{N}._-]+/gu, '_').slice(0, 60) || 'collection';
+    const asciiFallback = rawName
+      .replace(/[^\x20-\x7E]/g, '_')
+      .replace(/["\\]/g, '_') || 'collection';
+    const utf8Encoded = encodeURIComponent(rawName);
+    const ts = Date.now();
+    const filenameAscii = `rskmedia_${asciiFallback}_${ts}.zip`;
+    const filenameUtf8 = `rskmedia_${utf8Encoded}_${ts}.zip`;
     res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Disposition',
+      `attachment; filename="${filenameAscii}"; filename*=UTF-8''${filenameUtf8}`);
 
     const archive = archiver('zip', { zlib: { level: 0 }, store: true });
     let clientGone = false;

@@ -46,51 +46,61 @@ function buildWhere({ categoryId, subcategoryId, age, type, params, idx = 3 }) {
 }
 
 const CollectionModel = {
-  // Список коллекций пользователя. Кроме name/id/count добавляем URL'ы
-  // первых трёх миниатюр — сетка коллекций рендерит их как preview.
-  // Три отдельных LATERAL JOIN'а вместо json_agg, потому что pg не умеет
-  // ORDER BY внутри array_agg без window function, а нам нужен строгий
-  // порядок (последние добавленные три).
+  // Список коллекций пользователя + для каждой — первые 3 миниатюры.
+  // Делаем ДВА простых запроса вместо одного жирного с LATERAL joins,
+  // потому что сложные JOIN'ы плохо кэшируются prepared statement'ом и
+  // сложнее дебажить: первая версия с LATERAL молча возвращала пустой
+  // набор из-за конфликта алиасов thumb1.id ↔ c.id при сериализации.
   async getAllForToken(tokenId) {
-    const result = await db.query(
-      `SELECT
-         c.id,
-         c.name,
-         c.created_at,
-         COALESCE(cnt.n, 0) AS count,
-         thumb1.thumbnail_s3_key AS thumb1,
-         thumb2.thumbnail_s3_key AS thumb2,
-         thumb3.thumbnail_s3_key AS thumb3,
-         thumb1.id AS thumb1_media_id,
-         thumb2.id AS thumb2_media_id,
-         thumb3.id AS thumb3_media_id
+    const listRes = await db.query(
+      `SELECT c.id, c.name, c.created_at,
+              (SELECT COUNT(*)::int
+               FROM collection_items ci
+               WHERE ci.collection_id = c.id) AS count
        FROM collections c
-       LEFT JOIN LATERAL (
-         SELECT COUNT(*)::int AS n FROM collection_items ci WHERE ci.collection_id = c.id
-       ) cnt ON true
-       LEFT JOIN LATERAL (
-         SELECT m.id, m.thumbnail_s3_key
-         FROM collection_items ci JOIN media m ON m.id = ci.media_id
-         WHERE ci.collection_id = c.id
-         ORDER BY ci.added_at DESC, ci.media_id DESC LIMIT 1 OFFSET 0
-       ) thumb1 ON true
-       LEFT JOIN LATERAL (
-         SELECT m.id, m.thumbnail_s3_key
-         FROM collection_items ci JOIN media m ON m.id = ci.media_id
-         WHERE ci.collection_id = c.id
-         ORDER BY ci.added_at DESC, ci.media_id DESC LIMIT 1 OFFSET 1
-       ) thumb2 ON true
-       LEFT JOIN LATERAL (
-         SELECT m.id, m.thumbnail_s3_key
-         FROM collection_items ci JOIN media m ON m.id = ci.media_id
-         WHERE ci.collection_id = c.id
-         ORDER BY ci.added_at DESC, ci.media_id DESC LIMIT 1 OFFSET 2
-       ) thumb3 ON true
        WHERE c.token_id = $1
        ORDER BY c.created_at DESC, c.id DESC`,
       [tokenId]
     );
-    return result.rows;
+    if (listRes.rows.length === 0) return [];
+
+    // top-3 last-added items для КАЖДОЙ моей коллекции. row_number
+    // partition-by гарантирует ровно ≤3 строки на коллекцию.
+    const ids = listRes.rows.map(r => r.id);
+    const thumbRes = await db.query(
+      `WITH ranked AS (
+         SELECT ci.collection_id,
+                m.id AS media_id,
+                m.thumbnail_s3_key,
+                ROW_NUMBER() OVER (
+                  PARTITION BY ci.collection_id
+                  ORDER BY ci.added_at DESC, ci.media_id DESC
+                ) AS rn
+         FROM collection_items ci
+         JOIN media m ON m.id = ci.media_id
+         WHERE ci.collection_id = ANY($1::int[])
+       )
+       SELECT collection_id, media_id, thumbnail_s3_key, rn
+       FROM ranked WHERE rn <= 3
+       ORDER BY collection_id, rn`,
+      [ids]
+    );
+
+    const thumbsByCollection = new Map();
+    for (const row of thumbRes.rows) {
+      if (!thumbsByCollection.has(row.collection_id)) {
+        thumbsByCollection.set(row.collection_id, []);
+      }
+      thumbsByCollection.get(row.collection_id).push({
+        media_id: row.media_id,
+        thumbnail_s3_key: row.thumbnail_s3_key,
+      });
+    }
+
+    return listRes.rows.map(c => ({
+      ...c,
+      thumbs: thumbsByCollection.get(c.id) || [],
+    }));
   },
 
   async getById(id, tokenId) {

@@ -1093,10 +1093,20 @@ body.modal-open .shortcut-help-btn {
   margin-bottom: 24px;
 }
 
-.confirm-actions {
+.confirm-actions,
+.confirm-buttons {
   display: flex;
   gap: 10px;
   justify-content: center;
+}
+.confirm-buttons .btn {
+  min-width: 96px;
+}
+.confirm-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 8px;
 }
 
 .confirm-actions .btn {
@@ -1665,6 +1675,40 @@ body.modal-open .shortcut-help-btn {
   touch-action: none;
   -webkit-user-select: none;
   user-select: none;
+}
+
+/* Универсальная иконочная кнопка — используется в actions коллекций
+   (список, заголовок внутри коллекции). Вынесен базовый класс, чтобы
+   и .collection-card-actions .icon-btn, и .collection-heading-actions
+   .icon-btn наследовали одну "рамку" и не выглядели голыми. */
+.icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--text-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition: var(--transition);
+  text-decoration: none;
+}
+.icon-btn:hover {
+  background: var(--bg-3);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.icon-btn.danger:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: var(--bg-3);
+}
+.icon-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* === COLLECTIONS ===
