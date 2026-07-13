@@ -1850,6 +1850,13 @@ body.modal-open .shortcut-help-btn {
   align-items: center;
   gap: 8px;
 }
+/* Классика: `.collections-empty { display: flex }` описано ниже
+   `.hidden { display: none }` — при одинаковой специфичности выигрывает
+   более позднее правило, поэтому empty state показывался даже с
+   классом hidden. Явный override возвращает поведение утилиты. */
+.collections-empty.hidden {
+  display: none;
+}
 .collections-empty-icon { color: var(--accent); margin-bottom: 8px; }
 .collections-empty-title { font-size: 18px; font-weight: 600; color: var(--text-primary); }
 .collections-empty-text { font-size: 14px; max-width: 320px; }
