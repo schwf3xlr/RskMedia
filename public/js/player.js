@@ -1612,6 +1612,7 @@ const gallery = {
     this._currentModalItem = null;
     this.zoom = null;
     this.removeFocusTrap();
+    this._flushPendingRefresh?.();
   },
 
   setupFocusTrap(element) {
@@ -1879,12 +1880,19 @@ gallery.init();
 // trigger 100 refetches.
 {
   let refreshTimer = null;
+  let pending = false;
   const schedule = () => {
+    pending = true;
     clearTimeout(refreshTimer);
     refreshTimer = setTimeout(() => {
       // Reset to page 1 and re-fetch. Only when the gallery is idle to
-      // avoid trampling an in-flight infinite-scroll load.
-      if (gallery.loading) { schedule(); return; }
+      // avoid trampling an in-flight infinite-scroll load. Also defer while
+      // a modal is open — wiping this.media out from under the modal would
+      // desync _currentModalItem and force navigateModal to close (the
+      // user's own edit re-triggers this event via SSE, so this reliably
+      // reproduces as "swipe closes the modal after 1-2 items").
+      if (gallery.loading || gallery.currentModalId) { schedule(); return; }
+      pending = false;
       gallery.media = [];
       gallery.page = 1;
       gallery.hasMore = true;
@@ -1893,6 +1901,7 @@ gallery.init();
       gallery.loadMore();
     }, 800);
   };
+  gallery._flushPendingRefresh = () => { if (pending) schedule(); };
   events.on('media.created', schedule);
   events.on('media.deleted', schedule);
   events.on('media.updated', schedule);
