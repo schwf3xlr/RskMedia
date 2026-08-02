@@ -174,7 +174,10 @@ async function streamFromS3(s3Key, rangeHeader, res) {
   const params = { Bucket: bucket, Key: s3Key };
   if (rangeHeader) params.Range = rangeHeader;
 
-  const response = await s3Client.send(new GetObjectCommand(params));
+  // large: true — 90s deadline вместо 20s. Оригиналы видео могут стримиться
+  // долго через медленный канал клиента; жёсткий 20s deadline их обрубит
+  // на полу-скачивании.
+  const response = await s3Client.send(new GetObjectCommand(params), { large: true });
 
   res.status(rangeHeader ? 206 : 200);
   if (response.ContentType) res.setHeader('Content-Type', response.ContentType);

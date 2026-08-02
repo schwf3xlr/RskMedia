@@ -11,7 +11,7 @@ const http = require('http');
 const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 50 });
 const httpAgent  = new http.Agent({ keepAlive: true, maxSockets: 50 });
 
-const s3Client = new S3Client({
+const rawS3Client = new S3Client({
   endpoint: process.env.S3_ENDPOINT,
   region: process.env.S3_REGION,
   credentials: {
@@ -23,13 +23,79 @@ const s3Client = new S3Client({
   requestHandler: new NodeHttpHandler({
     // connect ≤ 5s: если Beget не отвечает по TCP handshake — не ждём вечно.
     connectionTimeout: 5000,
-    // Между чтением байт ≤ 30s. Актуально для больших видео и вялого канала.
-    // Без этого AWS SDK висит бессрочно, соединение забито, следующий запрос
-    // в очереди упирается в лимит сокетов браузера/proxy.
-    socketTimeout: 30000,
+    // Между чтением байт ≤ 60s. Streaming больших видео должен успеть, но
+    // если Beget шлёт по 1 байту в минуту — прерываем.
+    socketTimeout: 60000,
     httpsAgent,
     httpAgent,
   }),
+});
+
+// === Concurrency limiter ===
+// Beget S3 (и любой S3-совместимый провайдер) throttle'ит при бурсте
+// параллельных connection'ов — это проявляется как "9KB/сек скачивания"
+// вместо нормальных 5-50 MB/с. Явно ограничиваем количество активных
+// s3Client.send()'ов — очередь на нашей стороне мягче, чем throttle.
+// 8 — эмпирически хорошо для одного user'а: параллельно грузятся 6-8
+// миниатюр карточек, остальное ждёт микросекунды.
+const S3_MAX_CONCURRENT = parseInt(process.env.S3_MAX_CONCURRENT, 10) || 8;
+let s3Active = 0;
+const s3Waiters = [];
+
+function s3Acquire() {
+  if (s3Active < S3_MAX_CONCURRENT) {
+    s3Active++;
+    return Promise.resolve();
+  }
+  return new Promise(resolve => s3Waiters.push(resolve));
+}
+function s3Release() {
+  const next = s3Waiters.shift();
+  if (next) next();
+  else s3Active--;
+}
+
+// === Общий deadline ===
+// Beget может подвиснуть посередине стрима — socketTimeout не спасёт,
+// если байты продолжают капать по чуть-чуть. Общий request-deadline
+// (по умолчанию 20с) вырубит запрос и AWS SDK попробует ещё раз через
+// maxAttempts:3. Deadlines применяем только к небольшим запросам —
+// thumb/display/preview кладутся в память полностью, они должны быть
+// быстрыми. Для original (стрим видео с Range) — 90s чтобы медленный
+// клиент успел скачать.
+const DEADLINE_SMALL_MS = parseInt(process.env.S3_DEADLINE_SMALL_MS, 10) || 20000;
+const DEADLINE_LARGE_MS = parseInt(process.env.S3_DEADLINE_LARGE_MS, 10) || 90000;
+
+function timeoutSignal(ms) {
+  // AbortSignal.timeout был добавлен в Node 17. Fallback через
+  // AbortController если нет.
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+    return AbortSignal.timeout(ms);
+  }
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  t.unref?.();
+  return ctrl.signal;
+}
+
+// Прокси для s3Client.send() — оборачивает в concurrency + deadline.
+// Экспортируется как обычный s3Client вниз по коду, так что вся кодовая
+// база (mediaProxy, mediaController, favoritesController, ...) автоматом
+// получает эти защиты.
+const s3Client = new Proxy(rawS3Client, {
+  get(target, prop) {
+    if (prop !== 'send') return target[prop];
+    return async (command, opts = {}) => {
+      await s3Acquire();
+      const isLarge = opts.large === true;
+      const deadline = timeoutSignal(isLarge ? DEADLINE_LARGE_MS : DEADLINE_SMALL_MS);
+      try {
+        return await target.send(command, { ...opts, abortSignal: opts.abortSignal || deadline });
+      } finally {
+        s3Release();
+      }
+    };
+  },
 });
 
 const bucket = process.env.S3_BUCKET;
