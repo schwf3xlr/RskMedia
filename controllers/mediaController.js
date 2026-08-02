@@ -257,7 +257,13 @@ async function processFile(file, { category_id, subcategory_id, age_rating } = {
   if (isImage) {
     buffer = await fs.readFile(filePath);
     if (!validateFileType(buffer, file.mimetype)) {
-      const err = new Error('Содержимое файла не соответствует его типу');
+      // Логируем первые 8 байт в hex — иначе диагностика "почему JPEG не
+      // прошёл" превращается в гадание на кофейной гуще. Мобильные камеры
+      // иногда шлют экзотику (HEIF под именем .jpg, JPEG XL с новой
+      // сигнатурой, пустой буфер и т.п.).
+      const head = Array.from(buffer.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+      logger.warn({ file: file.originalname, mimetype: file.mimetype, head, size: buffer.length }, 'file magic mismatch');
+      const err = new Error(`Содержимое файла не соответствует его типу (${file.mimetype}, первые байты: ${head})`);
       err.status = 400;
       throw err;
     }

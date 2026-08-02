@@ -260,11 +260,13 @@ document.getElementById('singleUploadForm')?.addEventListener('submit', async (e
   progressFill.style.width = '0%';
 
   try {
+    // Для одиночной загрузки Cancel-кнопки в UI нет — AbortController не
+    // заводим. Раньше здесь ссылался на несуществующий singleUploadController
+    // (ReferenceError сразу после первой попытки одиночной загрузки).
     await api.upload('/api/media/upload/single', formData, {
       onProgress: (percent) => {
         progressFill.style.width = `${percent}%`;
       },
-      signal: singleUploadController.signal,
     });
 
     progressFill.style.width = '100%';
