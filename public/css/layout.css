@@ -597,13 +597,10 @@
     height: 20px;
   }
 
-  .modal-bottom-bar {
-    /* Native <video> controls на мобилке съедают ~48px снизу, при bottom:14px
-       баррель с возрастом/сердцем ложится прямо на ползунок перемотки.
-       Поднимаем над контролами с небольшим запасом. */
-    bottom: 76px;
-    padding: 8px 14px;
-  }
+  /* Мобильные правки .modal-bottom-bar живут в components.css, потому что
+     этот файл грузится ПОСЛЕ layout.css и переопределяет любое правило
+     .modal-bottom-bar с одинаковой специфичностью — раньше media query
+     здесь молча съедался. */
 }
 
 @media (max-width: 768px) {

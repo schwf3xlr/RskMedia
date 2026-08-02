@@ -547,6 +547,17 @@
   pointer-events: none;
 }
 
+/* Мобилка. Родные <video>-контролы занимают снизу ~48px — при bottom:20px
+   плашка с возрастом/сердцем ложится прямо на ползунок перемотки. Правило
+   должно жить именно в components.css: любая @media в layout.css с тем же
+   селектором проиграет каскаду, потому что components.css грузится после. */
+@media (max-width: 600px) {
+  .modal-bottom-bar {
+    bottom: 76px;
+    padding: 8px 14px;
+  }
+}
+
 /* === MODAL EDIT BUTTON === */
 .modal-edit {
   position: absolute;
