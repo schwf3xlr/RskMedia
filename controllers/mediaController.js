@@ -341,8 +341,35 @@ async function cleanupTempFiles(paths) {
 
 function validateVideoFile(videoPath) {
   return new Promise((resolve, reject) => {
-    ffmpeg.ffprobe(videoPath, (err) => {
-      if (err) return reject(new Error('Файл повреждён или имеет неподдерживаемый видеоформат'));
+    ffmpeg.ffprobe(videoPath, (err, metadata) => {
+      if (err) {
+        // Раньше глотали причину и показывали generic "Файл повреждён".
+        // Теперь логируем реальный err.message от ffprobe — типовые
+        // варианты:
+        //   "Cannot find ffprobe"                → бинарник не установлен
+        //   "spawn ffprobe ENOENT"               → его нет в PATH
+        //   "Invalid data found ..."             → битый файл
+        //   "moov atom not found"                → недокачанный MP4
+        //   "No such file or directory"          → multer не дописал
+        // По конкретному тексту можно понять что чинить.
+        logger.error({
+          err: err.message || String(err),
+          videoPath,
+          hint: err.message && /ffprobe|ENOENT/.test(err.message)
+            ? 'ffprobe не найден в PATH — установите ffmpeg с ffprobe'
+            : undefined,
+        }, 'ffprobe failed');
+        return reject(new Error(
+          err.message && /ffprobe|ENOENT/.test(err.message)
+            ? 'На сервере не установлен ffprobe (нужен ffmpeg с ffprobe)'
+            : `Не удалось прочитать видео: ${err.message || 'неизвестная ошибка ffprobe'}`
+        ));
+      }
+      // Sanity: хотя бы один video stream должен быть.
+      const hasVideo = metadata?.streams?.some(s => s.codec_type === 'video');
+      if (!hasVideo) {
+        return reject(new Error('В файле нет видео-потока'));
+      }
       resolve();
     });
   });
