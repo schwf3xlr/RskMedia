@@ -35,6 +35,24 @@ function looksLikeHeic(buffer) {
   return ['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'hevm', 'hevs', 'mif1', 'msf1'].includes(brand);
 }
 
+// WebP: RIFF ....size.... WEBP. Android часто сохраняет чат-картинки как
+// WebP, но браузер при drag&drop даёт им mime image/jpeg по расширению.
+function looksLikeWebp(buffer) {
+  if (buffer.length < 12) return false;
+  return buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
+         buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50;
+}
+
+// PNG-signature: телефоны иногда шлют скриншоты как .jpg.
+function looksLikePng(buffer) {
+  return checkSignature(buffer, MAGIC_BYTES['image/png']);
+}
+
+// GIF: тоже встречается под именем .jpg.
+function looksLikeGif(buffer) {
+  return checkSignature(buffer, MAGIC_BYTES['image/gif']);
+}
+
 function validateFileType(buffer, mimeType) {
   if (!Buffer.isBuffer(buffer) || buffer.length < 8) return false;
 
@@ -54,10 +72,18 @@ function validateFileType(buffer, mimeType) {
            buffer[10] === 0x42 && buffer[11] === 0x50;
   }
 
-  // JPEG: если mime image/jpeg — принимаем и настоящий JPEG (FF D8), и HEIC
-  // (телефоны часто ставят image/jpeg mime при экспорте HEIC).
+  // JPEG: mime image/jpeg часто ставится по расширению .jpg, а внутри
+  // может лежать что угодно из "картиночных" форматов. Принимаем любой
+  // формат, который наш image-pipeline (sharp через libvips) точно
+  // умеет читать: JPEG, HEIC, WebP, PNG, GIF. Это уводит проблему из
+  // валидатора magic bytes в валидатор sharp'а — если sharp не осилит,
+  // упадёт с осмысленным сообщением ниже по стеку.
   if (mimeType === 'image/jpeg') {
-    return checkSignature(buffer, MAGIC_BYTES['image/jpeg']) || looksLikeHeic(buffer);
+    return checkSignature(buffer, MAGIC_BYTES['image/jpeg'])
+      || looksLikeHeic(buffer)
+      || looksLikeWebp(buffer)
+      || looksLikePng(buffer)
+      || looksLikeGif(buffer);
   }
 
   const signatures = MAGIC_BYTES[mimeType];
