@@ -722,12 +722,15 @@ const gallery = {
       `;
       card.appendChild(playBtn);
 
-      // Animated preview on hover. Only wire it up if the server actually
-      // produced one (older uploads and codec-incompatible clips have no
-      // preview_url — they stay on the static thumbnail without penalty).
-      // Debounce with a small delay so a mouse crossing the grid doesn't
-      // trigger dozens of network requests.
-      if (item.preview_url && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      // Animated preview on hover. Только для устройств с реальным hover
+      // (десктоп с мышью). На touch `pointerenter` срабатывает по тапу и
+      // запускает анимированный WebP — лишняя нагрузка на скролл, а
+      // визуально не помогает: пользователь тапнул, чтобы открыть модалку,
+      // ему не нужен preview. matchMedia('(hover: hover)') отсеивает
+      // мобильные браузеры даже когда к телефону подключена мышь? — в
+      // 99% случаев именно то, что мы хотим.
+      const supportsHover = matchMedia('(hover: hover)').matches;
+      if (item.preview_url && supportsHover && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
         let previewImg = null;
         let hoverTimer = null;
         const enter = () => {

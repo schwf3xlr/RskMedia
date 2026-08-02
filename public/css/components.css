@@ -1013,6 +1013,48 @@ body.modal-open .shortcut-help-btn {
   .shortcut-help-btn {
     display: none !important;
   }
+
+  /* === Mobile scroll perf ===
+     На /collections скролл плавный, а в галерее/избранном — тормозит.
+     Разница: медиа-карточки нагружают compositing тяжёлыми эффектами,
+     которые GPU мобильных чипов вытягивают плохо. Убираем всё, что
+     мобилке заведомо не нужно и не заметно на глаз. */
+
+  /* backdrop-filter: blur(8px) на КАЖДОЙ карточке × 2-3 бэйджа =
+     compositing-очередь при быстром скролле визуально даёт 20-30fps.
+     Замещаем на непрозрачный фон — визуально почти то же самое, но
+     без per-frame пересчёта backdrop'а. */
+  .card-age,
+  .card-favorite,
+  .card-play {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: rgba(0, 0, 0, 0.55);
+  }
+  .card-favorite.active { background: rgba(239, 68, 68, 0.35); }
+
+  /* opacity+translateY animation на КАЖДОЙ карточке при появлении.
+     На быстром скролле десятки карточек анимируются одновременно —
+     GPU compositing захлёбывается. Заодно снимаем transition, чтобы
+     hover-эффект (которого на touch и так нет) не создавал listener. */
+  .media-card {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+    /* На мобильном карточка ≈ 180×240 (не 260×340 как на десктопе),
+       правильный hint для content-visibility. */
+    contain-intrinsic-size: 180px 240px;
+  }
+  .media-card:hover {
+    transform: none !important;
+    box-shadow: none !important;
+  }
+  /* Hover-preview для видео тоже не нужна на touch — pointerenter
+     срабатывает по тапу и крутит анимированный WebP; лучше пусть
+     остаётся статическая миниатюра. JS уже гейт'ит по (hover: hover),
+     но CSS-подстраховка на случай если кто-то мимо гейта его добавит. */
+  .card-preview { display: none !important; }
 }
 
 /* === SKELETON === */
