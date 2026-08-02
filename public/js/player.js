@@ -43,6 +43,15 @@ function newRandomSeed() {
   return Math.floor(Math.random() * 0x7fffffff) + 1;
 }
 
+// Кэшированный readClientConfig — читаем meta один раз на всю страницу.
+// Флаг mediaDelivery ('cdn'/'s3'/'proxy') решает, можно ли строить srcset
+// с ?w=NNN (только 'proxy' — там наш Node ресайзит на лету).
+window.__CLIENT_CONFIG__ = (() => {
+  try {
+    return JSON.parse(document.querySelector('meta[name="app-config"]')?.content || '{}');
+  } catch { return {}; }
+})();
+
 const gallery = {
   media: [],
   page: 1,
@@ -607,14 +616,18 @@ const gallery = {
     const PRELOAD_COUNT = 6;
     const head = document.head;
     const top = items.slice(0, PRELOAD_COUNT);
+    const cfg = window.__CLIENT_CONFIG__ || {};
+    const canTransform = cfg.mediaDelivery === 'proxy';
     for (const item of top) {
       const url = item.thumbnail_url || item.display_url || item.url;
       if (!url) continue;
       const link = document.createElement('link');
       link.rel = 'preload';
       link.as = 'image';
-      link.href = url;
-      if (item.display_url) {
+      // CDN/S3 отдают файл как есть — грузим display вместо thumb, чтобы
+      // сразу иметь высокое качество и не делать двух запросов.
+      link.href = canTransform ? url : (item.display_url || url);
+      if (canTransform && item.display_url) {
         const stripQuery = (u) => u.split('?')[0];
         const thumbBase = stripQuery(item.thumbnail_url || item.display_url);
         const displayBase = stripQuery(item.display_url);
@@ -641,17 +654,24 @@ const gallery = {
 
     const isVideo = item.type === 'video';
     const mediaEl = document.createElement('img');
+    // Режим раздачи медиа: если через CDN — sharp-трансформации (?w=NNN)
+    // не поддерживаются, отдаём display как есть. Только для proxy-режима
+    // строим srcset с ресайзом на стороне Node.
+    const canTransform = window.__CLIENT_CONFIG__.mediaDelivery === 'proxy';
+
     if (isVideo || !item.display_url) {
       // Videos always show the thumbnail (no full-res frame available);
       // items missing a display_url fall back to the thumbnail too.
       mediaEl.src = item.thumbnail_url || item.url;
+    } else if (!canTransform) {
+      // CDN / signed-S3: файлы отдаются как есть, отдаём display 1920px.
+      // Он ~200KB — крупнее чем srcset-подобранный вариант на 50vw мобильном
+      // экране, но зато без нагрузки на наш Node и с CDN edge-кэша.
+      mediaEl.src = item.display_url;
     } else {
-      // Photos: multi-step srcset + sizes so the browser picks the smallest
-      // variant that still covers (viewport width x DPR). The proxy serves
-      // /media/{type}/{id}?w=NNN with server-side sharp resize + per-variant
-      // cache, so a 50vw card on a 1x display loads ~400w (~30 KB) instead
-      // of the full 1920w display (~200 KB). High-DPR phones still get a
-      // crisp 800-1200w variant via sizes x DPR.
+      // Proxy: multi-step srcset + sizes так, чтобы браузер выбрал минимально
+      // покрывающий вариант. /media/{type}/{id}?w=NNN уходит в наш Node,
+      // который делает sharp resize + кэширует per-variant.
       const stripQuery = (url) => url.split('?')[0];
       const thumbBase = stripQuery(item.thumbnail_url || item.display_url);
       const displayBase = stripQuery(item.display_url);

@@ -73,6 +73,23 @@ const env = Object.freeze({
   SIGN_URL_EXPIRES: optInt('SIGN_URL_EXPIRES', 3600),
   USE_MEDIA_PROXY: process.env.USE_MEDIA_PROXY !== 'false',
 
+  // Как раздавать медиа клиенту:
+  //   'proxy' (default) — через /media/* (наш Node качает с S3, отдаёт)
+  //   's3'              — прямые presigned URLs на S3 (обход прокси)
+  //   'cdn'             — прямые публичные URLs на CDN (максимум скорости)
+  // CDN режим требует CDN_URL. При CDN клиент не может sharp-транcформить —
+  // отдаём display 1920px как есть, без ?w=. Backup/restore и загрузка на
+  // сервере продолжают ходить в S3 напрямую (S3_ENDPOINT) — это отдельно.
+  MEDIA_DELIVERY: (() => {
+    const raw = (process.env.MEDIA_DELIVERY || '').toLowerCase();
+    if (raw === 'cdn' || raw === 's3' || raw === 'proxy') return raw;
+    // Legacy: раньше был только USE_MEDIA_PROXY=true|false.
+    return process.env.USE_MEDIA_PROXY === 'false' ? 's3' : 'proxy';
+  })(),
+  // База CDN — например https://elbroriputeyof.begetcdn.cloud (БЕЗ слэша
+  // в конце). URL к файлу: `${CDN_URL}/${s3_key}`.
+  CDN_URL: (process.env.CDN_URL || '').replace(/\/+$/, ''),
+
   UPLOAD: {
     MAX_FILE_SIZE_MB: optInt('MAX_FILE_SIZE_MB', 500),
     MAX_PHOTO_SIZE_MB: optInt('MAX_PHOTO_SIZE_MB', 50),
@@ -90,5 +107,11 @@ const env = Object.freeze({
 
   SHUTDOWN_TIMEOUT_MS: optInt('SHUTDOWN_TIMEOUT_MS', 15000),
 });
+
+// Cross-validate: CDN режим бесполезен без CDN_URL — падаем на старте
+// вместо того, чтобы гнать пустые пути клиенту.
+if (env.MEDIA_DELIVERY === 'cdn' && !env.CDN_URL) {
+  throw new Error('MEDIA_DELIVERY=cdn requires CDN_URL to be set (e.g. https://xxx.begetcdn.cloud)');
+}
 
 module.exports = env;

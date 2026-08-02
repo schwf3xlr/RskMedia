@@ -50,11 +50,19 @@ function s3Origin() {
     return null;
   }
 }
+function cdnOrigin() {
+  if (!env.CDN_URL) return null;
+  try { return new URL(env.CDN_URL).origin; } catch { return null; }
+}
 const S3_ORIGIN = s3Origin();
+const CDN_ORIGIN = cdnOrigin();
 
 function buildCspDirectives(res) {
   const mediaHosts = ["'self'", "data:", "blob:"];
   if (S3_ORIGIN) mediaHosts.push(S3_ORIGIN);
+  // Если раздача через CDN — картинки/видео грузятся не с нашего домена.
+  // Без этой строки браузер режет их по CSP img-src/media-src.
+  if (CDN_ORIGIN) mediaHosts.push(CDN_ORIGIN);
   return {
     defaultSrc: ["'self'"],
     scriptSrc: ["'self'", `'nonce-${res.locals.nonce}'`],
@@ -88,6 +96,10 @@ app.use((req, res, next) => {
     maxVideoSizeMb: env.UPLOAD.MAX_VIDEO_SIZE_MB,
     maxFileSizeMb: env.UPLOAD.MAX_FILE_SIZE_MB,
     maxBatchFiles: env.UPLOAD.MAX_BATCH_FILES,
+    // 'cdn' | 's3' | 'proxy'. Клиент по этому флагу решает, строить ли
+    // srcset с ?w= (только proxy — там наш Node ресайзит на лету) или
+    // отдавать display как есть.
+    mediaDelivery: env.MEDIA_DELIVERY,
   };
   next();
 });
