@@ -470,7 +470,7 @@
 
 .modal-bottom-bar {
   position: absolute;
-  bottom: var(--space-5);
+  bottom: 32px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 10;
@@ -553,7 +553,7 @@
    селектором проиграет каскаду, потому что components.css грузится после. */
 @media (max-width: 600px) {
   .modal-bottom-bar {
-    bottom: 76px;
+    bottom: 32px;
     padding: 8px 14px;
   }
 }
