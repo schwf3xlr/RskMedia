@@ -1,5 +1,15 @@
 const { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const { NodeHttpHandler } = require('@smithy/node-http-handler');
+const https = require('https');
+const http = require('http');
+
+// Keep-alive агенты: без них AWS SDK на каждый запрос создаёт новый TCP+TLS
+// коннект к S3, что даёт лишние 100-300ms latency И упирается в лимит
+// ephemeral-портов при бурсте запросов (проявляется как "иногда одно медиа
+// грузится 15 секунд"). Пулим соединения — переиспользуем.
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 50 });
+const httpAgent  = new http.Agent({ keepAlive: true, maxSockets: 50 });
 
 const s3Client = new S3Client({
   endpoint: process.env.S3_ENDPOINT,
@@ -10,6 +20,16 @@ const s3Client = new S3Client({
   },
   forcePathStyle: true,
   maxAttempts: 3,
+  requestHandler: new NodeHttpHandler({
+    // connect ≤ 5s: если Beget не отвечает по TCP handshake — не ждём вечно.
+    connectionTimeout: 5000,
+    // Между чтением байт ≤ 30s. Актуально для больших видео и вялого канала.
+    // Без этого AWS SDK висит бессрочно, соединение забито, следующий запрос
+    // в очереди упирается в лимит сокетов браузера/proxy.
+    socketTimeout: 30000,
+    httpsAgent,
+    httpAgent,
+  }),
 });
 
 const bucket = process.env.S3_BUCKET;

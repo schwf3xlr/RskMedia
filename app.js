@@ -1,3 +1,13 @@
+// UV_THREADPOOL_SIZE ДОЛЖЕН быть выставлен до первого нативного модуля,
+// иначе libuv уже создаст пул размером 4. Sharp (resize/convert) и
+// bcrypt (пароли) живут в этом пуле — на дефолтных 4 воркерах
+// одновременный поток /media/*?w=NNN запросов превращается в очередь,
+// клиент видит "иногда одно медиа грузится 15 секунд". 16 — безопасно
+// для 2-4 CPU cores и типичной облачной VDS.
+if (!process.env.UV_THREADPOOL_SIZE) {
+  process.env.UV_THREADPOOL_SIZE = '16';
+}
+
 // env must be required first — it validates required vars (S3_*, JWT_SECRET,
 // COOKIE_SECRET) at load time and fails fast if any are missing/too weak.
 const env = require('./config/env');

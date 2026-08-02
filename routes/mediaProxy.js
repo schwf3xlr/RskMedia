@@ -86,6 +86,7 @@ async function fetchFullBuffer(cacheKey, s3Key) {
   if (inFlight.has(cacheKey)) return inFlight.get(cacheKey);
 
   const promise = (async () => {
+    const startedAt = Date.now();
     try {
       const response = await s3Client.send(new GetObjectCommand({ Bucket: bucket, Key: s3Key }));
       const chunks = [];
@@ -101,6 +102,13 @@ async function fetchFullBuffer(cacheKey, s3Key) {
       const buffer = Buffer.concat(chunks, total);
       const contentType = response.ContentType || 'image/jpeg';
       if (cacheable) cacheSet(cacheKey, buffer, contentType);
+      // Логируем медленные S3-хиты (>2с) — это ранний детектор проблем
+      // с Beget (перегрузка, паника кэша, network jitter). В prod поможет
+      // отличить "тормозит клиент" от "тормозит S3".
+      const elapsed = Date.now() - startedAt;
+      if (elapsed > 2000) {
+        require('../helpers/logger').warn({ s3Key, elapsed, size: total }, 'slow S3 fetch');
+      }
       return { buffer, contentType };
     } finally {
       inFlight.delete(cacheKey);
