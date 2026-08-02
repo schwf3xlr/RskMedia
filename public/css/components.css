@@ -711,6 +711,7 @@
 
 .btn-delete-media {
   min-width: 0;
+  padding: 0 14px;
 }
 
 .btn-delete-media svg {
@@ -718,6 +719,29 @@
   height: 18px;
   flex-shrink: 0;
   stroke-width: 2.25;
+}
+
+/* На узких экранах кнопки в футере не помещаются с фиксированным min-width
+   и Сохранить упирается в правую стенку. Раздаём ширину поровну через
+   flex: 1, режем внутренний padding и уменьшаем padding самого футера,
+   чтобы текст никогда не касался краёв. */
+@media (max-width: 480px) {
+  .edit-panel-footer {
+    padding: 12px 14px;
+    gap: 10px;
+  }
+  .edit-panel-footer .btn {
+    min-width: 0;
+    padding: 0 12px;
+    flex: 1 1 0;
+  }
+  .edit-panel-footer-right {
+    flex: 2 1 0;
+    gap: 10px;
+  }
+  .btn-delete-media {
+    padding: 0 12px;
+  }
 }
 
 @keyframes fadeIn {
@@ -2081,8 +2105,9 @@ body.modal-open .shortcut-help-btn {
   75% { transform: translateX(4px); }
 }
 
-/* Кнопка "+" рядом с ❤️ в модалке медиа. Совпадает по размеру и
-   обводке с .modal-favorite, чтобы не выделяться в bottom-bar'e. */
+/* Кнопка "+" рядом с ❤️ в модалке медиа. Совпадает по цветам, обводке
+   и «морозной» подложке с .modal-close / .modal-edit / .modal-favorite,
+   чтобы вся плавающая обвязка модалки выглядела единым сетом кнопок. */
 .modal-add-collection {
   position: absolute;
   bottom: 20px;
@@ -2090,8 +2115,10 @@ body.modal-open .shortcut-help-btn {
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: var(--overlay-scrim);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--overlay-hairline);
   color: white;
   display: inline-flex;
   align-items: center;
@@ -2102,13 +2129,12 @@ body.modal-open .shortcut-help-btn {
   z-index: 5;
 }
 .modal-add-collection:hover {
-  background: rgba(255, 255, 255, 0.18);
-  border-color: rgba(255, 255, 255, 0.3);
-  transform: scale(1.05);
+  background: var(--overlay-scrim-strong);
+  transform: scale(1.08);
 }
 .modal-add-collection.active {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--overlay-scrim-strong);
+  border-color: rgba(255, 255, 255, 0.35);
 }
 
 @media (max-width: 768px) {

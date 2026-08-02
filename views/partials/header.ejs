@@ -14,15 +14,15 @@
        vs. loading the whole Cyrillic + Latin extended set. -->
   <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap&subset=cyrillic,latin">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap&subset=cyrillic,latin" rel="stylesheet">
-  <link rel="preload" as="style" href="/css/base.css">
-  <link rel="stylesheet" href="/css/base.css">
-  <link rel="stylesheet" href="/css/layout.css">
-  <link rel="stylesheet" href="/css/components.css">
-  <link rel="stylesheet" href="/css/pages.css">
-  <link rel="stylesheet" href="/css/style.css">
+  <link rel="preload" as="style" href="/css/base.css?v=<%= ASSET_VERSION %>">
+  <link rel="stylesheet" href="/css/base.css?v=<%= ASSET_VERSION %>">
+  <link rel="stylesheet" href="/css/layout.css?v=<%= ASSET_VERSION %>">
+  <link rel="stylesheet" href="/css/components.css?v=<%= ASSET_VERSION %>">
+  <link rel="stylesheet" href="/css/pages.css?v=<%= ASSET_VERSION %>">
+  <link rel="stylesheet" href="/css/style.css?v=<%= ASSET_VERSION %>">
   <!-- defer keeps lucide.min.js from blocking parse — it's only needed
        after DOMContentLoaded fires (icons are created by navbar.js/etc). -->
-  <script src="/js/lucide.min.js" nonce="<%= nonce %>" defer></script>
+  <script src="/js/lucide.min.js?v=<%= ASSET_VERSION %>" nonce="<%= nonce %>" defer></script>
   <script nonce="<%= nonce %>">
     // Apply theme synchronously, BEFORE first paint, to avoid FOUC.
     // Stored value can be: "light" | "dark" | "auto" | null (never set).

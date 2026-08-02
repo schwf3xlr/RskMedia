@@ -86,7 +86,12 @@ function buildCspDirectives(res) {
 app.use(cookieParser(env.COOKIE_SECRET));
 app.use(csrfTokenMiddleware);
 app.use(nonceMiddleware);
+// Cache-buster для /css и /js. Прод отдаёт статику с Cache-Control: 1d,
+// без ?v= браузер (особенно мобильный) держит старый файл сутки после
+// деплоя и правки CSS «не приходят». Меняется вместе с package.json.version.
+const ASSET_VERSION = require('./package.json').version;
 app.use((req, res, next) => {
+  res.locals.ASSET_VERSION = ASSET_VERSION;
   res.locals.AGE_RATINGS = AGE_RATINGS;
   // Client-facing constants exposed via <meta> in header.ejs so the
   // frontend doesn't fork the numbers out of sync with config/constants.js.

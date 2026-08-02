@@ -42,4 +42,4 @@
 </nav>
 <!-- defer so it runs AFTER the deferred lucide.min.js: both are scheduled
      at DOMContentLoaded and defer preserves document order. -->
-<script src="/js/navbar.js" nonce="<%= nonce %>" defer></script>
+<script src="/js/navbar.js?v=<%= ASSET_VERSION %>" nonce="<%= nonce %>" defer></script>
